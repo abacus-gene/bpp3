@@ -1,7 +1,7 @@
           seed =  -1
 
-       seqfile = ChenLi2001.txt
-      Imapfile = ChenLi2001.Imap.txt
+       seqfile = ../examples/ChenLi2001.txt
+      Imapfile = ../examples/ChenLi2001.Imap.txt
        outfile = out.txt
       mcmcfile = mcmc.txt
 
@@ -28,9 +28,9 @@
 *      heredity = 0 4 4   # (0: No variation, 1: estimate, 2: from file) & a_gamma b_gamma (if 1)
 * sequenceerror = 0 0 0 0 : 0.05 1   # sequencing errors: a_gamma, b_gamma
 
-       finetune = 1: .001 .001 .03 .0005 .05 .01 .01  # auto (0 or 1): MCMC step lengths
+       finetune = 1: .01 .02 .03 .04 .05 .01 .01  # auto (0 or 1): MCMC step lengths
 
          print = 1 0 0 0   * MCMC samples, locusrate, heredityscalars Genetrees
         burnin = 8000
-      sampfreq = 1
-       nsample = 100000
+      sampfreq = 2
+       nsample = 20000

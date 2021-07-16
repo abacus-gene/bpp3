@@ -1,0 +1,31 @@
+ambi, 3min
+(((C, H) #0.360346, L) #0.468025, K);   [P = 0.211538]
+((C, (H, L) #0.343017) #0.473305, K);   [P = 0.220078]
+((C, (H, L) #0.342747) #0.440116, K);   [P = 0.211168]
+((C, (H, L) #0.325847) #0.448766, K);   [P = 0.207228]
+
+
+D, 11m45s
+((C, (H, L) #0.665923) #0.369116, K);   [P = 0.287757]
+((C, (H, L) #0.692283) #0.349037, K);   [P = 0.285207]
+
+
+P, 8m
+((C, (H, L) #0.796552) #0.422486, K);   [P = 0.360906]
+((C, (H, L) #0.828882) #0.405906, K);   [P = 0.367206]
+
+
+R, 8m
+((C, (H, L) #0.660583) #0.401596, K);   [P = 0.355966]
+((C, (H, L) #0.601444) #0.420186, K);   [P = 0.341597]
+
+
+bpp4 --cfile ../A00.ambi.ctl    &> log.A00.ambi.txt   &
+bpp4 --cfile ../A00.D.ctl       &> log.A00.D.txt      &
+bpp4 --cfile ../A00.phase.ctl   &> log.A00.phase.txt  &
+bpp4 --cfile ../A00.random.ctl  &> log.A00.random.txt &
+
+bpp4 --cfile ../A01.ambi.ctl    &> log.A01.ambi.txt   &
+bpp4 --cfile ../A01.D.ctl       &> log.A01.D.txt      &
+bpp4 --cfile ../A01.phase.ctl   &> log.A01.phase.txt  &
+bpp4 --cfile ../A01.random.ctl  &> log.A01.random.txt &

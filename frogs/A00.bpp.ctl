@@ -1,7 +1,7 @@
           seed =  -1
 
-       seqfile = frogs.txt
-      Imapfile = frogs.Imap.txt
+       seqfile = ../frogs.txt
+      Imapfile = ../frogs.Imap.txt
        outfile = out.txt
       mcmcfile = mcmc.txt
 
@@ -28,7 +28,7 @@
 *     heredity = 1 4 4
 *    locusrate = 1 5
 
-      finetune =  1: 5 0.0002 0.002 0.0002 0.2 0.33 1.0  # finetune for GBtj, GBspr, theta, tau, mix, locusrate, seqerr
+      finetune =  1: 5 0.001 0.001  0.001 0.3 0.33 1.0  # finetune for GBtj, GBspr, theta, tau, mix, locusrate, seqerr
 
          print = 1 0 0 0   * MCMC samples, locusrate, heredityscalars, Genetrees
         burnin = 8000

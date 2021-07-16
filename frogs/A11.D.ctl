@@ -3,20 +3,20 @@
        seqfile = ../frogs.txt
       Imapfile = ../frogs.Imap.txt
 *      Imapfile = ../frogs.Imap.introgression.txt
-       outfile = out.txt
-      mcmcfile = mcmc.txt
+       outfile = out.A11.D.txt
+      mcmcfile = mcmc.A11.D.txt
 
   speciesdelimitation = 0 * fixed species tree
 * speciesdelimitation = 1 0 2   * species delimitation rjMCMC algorithm0 and finetune(e)
  speciesdelimitation = 1 1 2 1  * species delimitation rjMCMC algorithm1 finetune (a m)
-         speciestree = 1  0.4 0.2 0.1   * speciestree pSlider ExpandRatio ShrinkRatio
+         speciestree = 1 0.1 0.12 0.123   * speciestree pSlider ExpandRatio ShrinkRatio
 
    speciesmodelprior = 1  * 0: uniform LH; 1:uniform rooted trees; 2: uniformSLH; 3: uniformSRooted
 
   species&tree = 4  K  C  L  H
                     9  7 14  2
                  (K, (C, (L, H)));
-        diploid =   1  1  1  1
+         phase =   1  1  1  1
                   
        usedata = 1  * 0: no data (prior); 1:seq like
          nloci = 5  * number of data sets in seqfile

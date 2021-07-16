@@ -7,6 +7,22 @@ If you have questions, please visit the BPP discussion site
 http://sourceforge.net/p/bpandp/discussion/.
 
 
+
+BP&P, Version 3.4c, July 2021
+
+The option heredity = 1, which estimates the heredity scalars from the
+data, is not working correctly, whether theta is integrated out or
+not.  It seems that this option never worked before.  
+
+I added options to produce PHASEd alignments and RANDOM alignments.  
+When
+   int print_random_phase = 1;
+and phase = 1 for some species, the program prints out a set of files with heterozygous 
+sites phased at random.  It also prints out locus1.fas, locus2.fas, etc. which can be used
+to runPHASE to generate the PHASEd alignments.  But this involves changing the source code.
+
+
+
 BP&P, Version 3.4a, September 2018
 
 The simulation program MCcoal is broken as the function reading the

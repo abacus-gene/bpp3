@@ -15,7 +15,8 @@
   species&tree = 4  H  C  K  L
                     2  7  9  14
                   (K, (C, (L, H)));
-                  
+         phase =    1  1  1  1
+
        usedata = 1  * 0: no data (prior); 1:seq like
          nloci = 5  * number of data sets in seqfile
 

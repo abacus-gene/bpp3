@@ -16,9 +16,16 @@
 #include <assert.h>
 
 #define square(a) ((a)*(a))
-#define FOR(i,n) for(i=0; i<n; i++)
-#define FPN(file) fputc('\n', file)
+//#define FOR(i,n) for(i=0; i<n; i++)
+//#define FPN(file) fputc('\n', file)
 #define F0 stdout
+#if !defined(MAX)
+#define MAX(a,b)                            (((a) > (b)) ? (a) : (b))
+#endif
+#if !defined(MIN)
+#define MIN(a,b)                            (((a) < (b)) ? (a) : (b))
+#endif
+
 #define min2(a,b) ((a)<(b)?(a):(b))
 #define max2(a,b) ((a)>(b)?(a):(b))
 #define swap2(a,b,y) { y=a; a=b; b=y; }
@@ -51,6 +58,7 @@ double reflect(double x, double a, double b);
 #define rndexp(mean) (-(mean)*log(rndu()))
 double rnduM0V1 (void);
 double rndNormal(void);
+int rndNp(double x[], int n, int p, double mx[], double vx[], int isvroot);
 int rndBinomial(int n, double p);
 double rndBox(void);
 double rndAirplane(void);
@@ -82,7 +90,7 @@ int AutodGamma (double Mmat[], double freqK[], double rK[], double *rho1, double
 double QuantileChi2 (double prob, double v);
 #define QuantileGamma(prob,alpha,beta) QuantileChi2(prob,2.0*(alpha))/(2.0*(beta))
 double  PDFGamma(double x, double alpha, double beta);
-#define CDFGamma(x,alpha,beta) IncompleteGamma((beta)*(x),alpha,LnGamma(alpha))
+#define CDFGamma(x,alpha,beta) IncompleteGamma((beta)*(x),alpha,lgamma(alpha))
 double logPriorRatioGamma(double xnew, double xold, double a, double b);
 double  PDFinvGamma(double x, double alpha, double beta);
 #define CDFinvGamma(x,alpha,beta) (1-CDFGamma(1/(x),alpha,beta))
@@ -110,9 +118,9 @@ double logPDFSkewN(double x, double loc, double scale, double shape);
 int StirlingS2(int n, int k);
 double lnStirlingS2(int n, int k);
 double LnGamma(double alpha);
-#define LnBeta(p,q) (LnGamma(p) + LnGamma(q) - LnGamma(p+q))
+#define LnBeta(p,q) (lgamma(p) + lgamma(q) - lgamma(p+q))
 double DFGamma(double x, double alpha, double beta);
-double IncompleteGamma (double x, double alpha, double ln_gamma_alpha);
+double IncompleteGamma (double x, double alpha, double lgamma_alpha);
 #define CDFBinormal(h,k,r)  LBinormal(-(h),-(k),r)   /* CDF for bivariate normal */
 double LBinormal (double h, double k, double r);
 double logLBinormal (double h, double k, double r);
@@ -138,13 +146,13 @@ int RemoveIndel(void);
 int f_mono_di (FILE *fout, char z[], int ls, int iring, double fb1[], double fb2[], double CondP[]);
 int PickExtreme (FILE *fout, char z[], int ls, int iring, int lfrag, int ffrag[]);
 
-int print1seq (FILE*fout, unsigned char *z, int ls, int pose[]);
-void printSeqs(FILE *fout, unsigned char *z[], unsigned char *spnames[], int ns, int ls, int npatt, double fpatt[], int *pose, char keep[], int format);
+int print1seq (FILE*fout, char *z, int ls, int pose[]);
+void printSeqs(FILE *fout, char *z[], char *spnames[], int ns, int ls, int npatt, double fpatt[], int *pose, char keep[], int format);
 int printPatterns(FILE *fout);
 void printSeqsMgenes (void);
-int printsma (FILE*fout, char*spname[], unsigned char*z[], int ns, int l, int lline, int gap, int seqtype, 
+int printsma (FILE*fout, char*spname[], char*z[], int ns, int l, int lline, int gap, int seqtype, 
     int transformed, int simple, int pose[]);
-int printsmaCodon (FILE *fout, unsigned char * z[], int ns, int ls, int lline, int simple);
+int printsmaCodon (FILE *fout, char * z[], int ns, int ls, int lline, int simple);
 int zztox ( int n31, int l, char z1[], char z2[], double *x );
 int testXMat (double x[]);
 double SeqDivergence (double x[], int model, double alpha, double *kapa);
@@ -363,15 +371,15 @@ int printGtree(int printBlength);
 void copySptree(void);
 void printSptree(void);
 
+int vasprintf(char** strp, const char* fmt, va_list ap);
 
-enum {BASEseq=0, CODONseq, AAseq, CODON2AAseq, BINARYseq, BASE5seq} SeqTypes;
 
-enum {PrBranch=1, PrNodeNum=2, PrLabel=4, PrNodeStr=8, PrAge=16, PrOmega=32} OutTreeOptions;
+extern int BASEseq, CODONseq, AAseq, CODON2AAseq, BINARYseq, BASE5seq;
+extern int PrBranch, PrNodeNum, PrLabel, PrNodeStr, PrAge, PrOmega;
 
 
 /* use mean (0; default) for discrete gamma instead of median (1) */
 #define DGammaUseMedian 0
-
 
 #define FAST_RANDOM_NUMBER
 
@@ -386,6 +394,6 @@ enum {PrBranch=1, PrNodeNum=2, PrLabel=4, PrNodeStr=8, PrAge=16, PrOmega=32} Out
 
 #define PAML_RELEASE      0
 
-#define pamlVerStr "paml version 4.9i, September 2018"
+#define pamlVerStr "paml version 4.9j, October 2019"
 
 #endif

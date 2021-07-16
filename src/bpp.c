@@ -5,7 +5,7 @@
    Copyright by Ziheng Yang, since July 2002
 
    Linux/UNIX gcc/icc:
-      icc -o bpp -O3 bpp.c tools.c
+      icc -o bpp -O3 -DUSE_AVX -mavx bpp.c tools.c
       icc -o bpp_sse -O3 -DUSE_SSE -msse3 bpp.c tools.c -lm
       icc -o bpp_avx -O3 -DUSE_AVX -mavx bpp.c tools.c -lm
       icc -o MCcoal -DSIMULATION -O3 bpp.c tools.c -lm
@@ -171,7 +171,7 @@ struct DATA { /* locus-specific data and gene tree information, used in lnpG */
 struct MCMCPARAMETERS {
    int resetsteps, burnin, nsample, sampfreq, usedata, saveconP;
    int print, printGenetree, printlocusrate, printheredity, moveinnode, RJalgorithm;
-   double finetune[7], RJfinetune[2], pSlider, ExpandRatio, ShrinkRatio;
+   double steplength[7], RJsteplength[2], pSlider, ExpandRatio, ShrinkRatio;
 }  mcmc;                /* control parameters */
 
 #endif
@@ -210,18 +210,18 @@ int collectx(int mode, FILE* fout, double x[]);
 int MCMC(FILE* fout);
 void SwitchconPin(void);
 void CopyconPin(int locus, int FromCurrent);
-double UpdateGB_InternalNode(double* lnL, double* lnpG, double finetune);
-double UpdateGB_SPR(double* lnL, double* lnpG, double finetune);
-double UpdateTheta(double *lnpG, double finetune, double space[]);
-double UpdateTau(double *lnL, double *lnpG, double finetune, double space[]);
-double mixing(double* lnL, double* lnpG, double finetune, double space[]);
+double UpdateGB_InternalNode(double* lnL, double* lnpG, double steplength);
+double UpdateGB_SPR(double* lnL, double* lnpG, double steplength);
+double UpdateTheta(double *lnpG, double steplength, double space[]);
+double UpdateTau(double *lnL, double *lnpG, double steplength, double space[]);
+double mixing(double* lnL, double* lnpG, double steplength, double space[]);
 int    UpdateSpeciesSplit(double *lnL, double* lnpG, double space[], double PrSplit);
 int    UpdateSpeciesJoin(double *lnL, double* lnpG, double space[], double PrSplit);
-double UpdateLocusrateHeredity(double* lnL, double* lnpG, double finetune);
-double UpdateSequenceErrors(double* lnL, double finetune, double space[]);
+double UpdateLocusrateHeredity(double* lnL, double* lnpG, double steplength);
+double UpdateSequenceErrors(double* lnL, double steplength, double space[]);
 int    BranchWeights(double weight[]);
 int    UpdateSpeciesTreeSPR(int NNIonly, double *lnL, double* lnpG, double space[]);
-int    UpdateSpeciesTreeNodeSlider(double *lnL, double* lnpG, double finetune, double space[]);
+int    UpdateSpeciesTreeNodeSlider(double *lnL, double* lnpG, double steplength, double space[]);
 int    NodeSliderScaleClade(int inode, int RDao[], double tauApath[], double factor);
 int    SetSonNodeFlags(int ispecies, double tauU, char flag[]);
 int    RubberProportional(int ispecies, double tauU, double tau, double taunew, double *lnproposal, double *space);
@@ -245,9 +245,8 @@ int printGtree(int printBlength);
 void checkGtree(void);
 int ProcessGtrees(FILE* fout);
 int PrintSmodel(FILE *fout, struct SMODEL *model, int printPhylogeny);
-int DescriptiveStatisticsSimpleBPP(FILE *fout, char infile[], int SkipColumns);
 int SpeciesTreeDelimitationModelRepresentation(struct SMODEL *model, int ndspecies);
-int  SummarizeA00_DescriptiveStatisticsSimpleBPP(FILE *fout, char infile[], int SkipColumns);
+int SummarizeA00_DescriptiveStatisticsSimpleBPP(FILE *fout, char infile[], int SkipColumns);
 /* SummarizeA01 uses CladeSupport() */
 void SummarizeA10_SpeciesDelimitation(FILE* fout, char mcmcf[]);
 void SummarizeA11_SpeciesTreeDelimitation(FILE* fout, char mcmcf[]);
@@ -276,7 +275,7 @@ int main(int argc, char*argv[])
 #else
    char ctlf[2048] = "MCcoal.ctl";
 #endif
-   char VerStr[64] = "Version 3.4, March 2018";
+   char VerStr[64] = "Version 3.4b, March 2021";
    FILE *fout;
    int i, k = 5;
 
@@ -319,6 +318,7 @@ int main(int argc, char*argv[])
 
    SetMapAmbiguity(com.seqtype, 0);
    ReadSeqData(com.seqf, com.locusratef, com.heredityf, fout, com.cleandata, (int*)com.space);
+
    GetMem((int*)com.space);
 
    if (mcmc.print >= 0) {
@@ -357,7 +357,7 @@ int GetOptionsSimulation(char *ctlf)
    int nopt = 18, lline = 4096, iopt, i, j, is, ierror;
    char line[4096], *pline, opt[32], *comment = "*#";
    char *optstr[] = { "seed", "noisy", "seqfile", "treefile", "Imapfile", "modelparafile", "concatfile",
-                     "species&tree", "diploid", "loci&length", "migration", "sequenceerror", "alpha_locusrate",
+                     "species&tree", "phase", "loci&length", "migration", "sequenceerror", "alpha_locusrate",
                      "model", "Qrates", "basefreqs", "alpha_siterate", "clock" };
    char name[LSPNAME];
    int ifield[NSPECIES];
@@ -532,17 +532,17 @@ int GetOptionsSimulation(char *ctlf)
 int GetOptions(char *ctlf)
 {
    int nopt = 26, lline = 4096, iopt, i, is, ierror;
-   char line[4096], *pline, opt[32], *comment = "*#", *seqerrstr = "0EF";
+   char line[4096], *pline, opt[64], *comment = "*#", *seqerrstr = "0EF";
    char *optstr[] = { "seed", "noisy", "seqfile", "Imapfile", "outfile", "mcmcfile", "checkpoint", "BayesFactorBeta",
-      "speciesdelimitation", "speciestree", "speciesmodelprior", "species&tree", "diploid",
+      "speciesdelimitation", "speciestree", "speciesmodelprior", "species&tree", "phase",
       "usedata", "nloci", "cleandata", "thetaprior", "tauprior", "locusrate", "heredity",
       "sequenceerror", "finetune", "print", "burnin", "sampfreq", "nsample" };
    char name[LSPNAME], ch;
    int ifield[NSPECIES];
-   double t = 1, *eps = mcmc.finetune;
+   double t = 1, *eps = mcmc.steplength;
    FILE  *fctl = gfopen(ctlf, "r");
 
-   strcpy(com.checkpointf, "bpp.bkpt");
+   strcpy(com.checkpointf, "bpp.ckpt");
    stree.SpeciesModelPrior = p1UniformRootedTree;
    mcmc.pSlider = -1;  mcmc.ExpandRatio = -1;  mcmc.ShrinkRatio = -1;
    data.lnpSpeciesModel = 0;
@@ -579,11 +579,11 @@ int GetOptions(char *ctlf)
                   case (6): sscanf(pline + 1, "%d", &com.checkpoint); break;
                   case (7): sscanf(pline + 1, "%lf", &BFbeta);        break; /* beta for marginal likelihood */
                   case (8):
-                     sscanf(pline + 1, "%d%d%lf%lf", &stree.speciesdelimitation, &mcmc.RJalgorithm, &mcmc.RJfinetune[0], &mcmc.RJfinetune[1]);
+                     sscanf(pline + 1, "%d%d%lf%lf", &stree.speciesdelimitation, &mcmc.RJalgorithm, &mcmc.RJsteplength[0], &mcmc.RJsteplength[1]);
                      if (stree.speciesdelimitation == 1) {
                         if (mcmc.RJalgorithm != 0 && mcmc.RJalgorithm != 1)  error2("RJalgorithm should be 0 or 1.");
-                        if (mcmc.RJfinetune[0] <= 0 || (mcmc.RJalgorithm == 1 && mcmc.RJfinetune[1] <= 0))
-                           error2("RJfinetune <= 0.\nError on the line speciesdelimitation?");
+                        if (mcmc.RJsteplength[0] <= 0 || (mcmc.RJalgorithm == 1 && mcmc.RJsteplength[1] <= 0))
+                           error2("RJsteplength <= 0.\nError on the line speciesdelimitation?");
                      }
                      break;
                   case (9):
@@ -611,8 +611,12 @@ int GetOptions(char *ctlf)
                   case (15): com.cleandata = (char)t;  break;
                   case (16): sscanf(pline + 1, "%lf%lf %c", &data.theta_prior[0], &data.theta_prior[1], &ch);
                      stree.NoTheta = (toupper(ch) == 'E' ? 0 : 1);
+                     t = data.theta_prior[1] / (data.theta_prior[0] - 1);
+                     if (t > 1) error2("Prior mean of theta is very large.  Please check thetaprior");
                      break;
                   case (17): sscanf(pline + 1, "%lf%lf%lf", &data.tau_prior[0], &data.tau_prior[1], &data.tau_prior[2]);
+                     t = data.tau_prior[1] / (data.tau_prior[0] - 1);
+                     if (t > 1) error2("Prior mean of tau is very large.  Please check tauprior");
                      break;
                   case (18):               /* locus rate */
                      sscanf(pline + 1, "%d%lf", &data.est_locusrate, &data.a_locusrate);
@@ -673,9 +677,10 @@ int GetOptions(char *ctlf)
                   break;
                }
             }
-            if (iopt == nopt)
-            {
-               printf("\noption %s in %s\n", opt, ctlf);  exit(-1);
+            if (iopt == nopt) {
+               printf("\noption '%s' in %s\n", opt, ctlf);
+               if (strstr(opt, "diploid")) printf("Change the keyword 'diploid' into 'phase' and try again.");
+               exit(-1);
             }
       }
       fclose(fctl);
@@ -758,6 +763,8 @@ int ReadSpeciesTree(FILE* fctl, char *curline)
    for (i = 0; i < NS; i++) {  /* for both species tree & gene trees.  This wastes space. */
       if (com.spname[i]) free(com.spname[i]);
       com.spname[i] = (char*)malloc((LSPNAME + 1) * sizeof(char));
+      if (com.spname[i] == NULL) error2("oom when allocating space for spname");
+      memset(com.spname[i], 0, (LSPNAME + 1) * sizeof(char));
    }
    splitline(curline, 1 + stree.nspecies, ifields);
    for (i = 0; i < stree.nspecies; i++) {
@@ -789,9 +796,9 @@ int ReadSpeciesTree(FILE* fctl, char *curline)
    else {
       ReadTreeN(fctl, &i, 0, 1);
       OutTreeN(F0, 1, com.simulation);
-      FPN(F0);
+      printf("\n");
       if (!com.simulation && stree.speciesdelimitation == 0 && stree.speciestree == 0 && stree.nspecies > NPopLongNames) {
-         OutTreeN(F0, 1, PrNodeNum); FPN(F0);
+         OutTreeN(F0, 1, PrNodeNum);  printf("\n");
       }
 
       /* copy into stree */
@@ -876,11 +883,13 @@ int ReadMigrationMatrix(FILE *fctl, char *pline)
    printf("\nmigration matrix\n%10s", "");
    for (j = 0; j < s21; j++)
       printf(" %9s", stree.nodes[j].name);
-   for (i = 0, FPN(F0); i < s21; i++, FPN(F0)) {
+   printf("\n"); 
+   for (i = 0; i < s21; i++) {
       printf("%-10s", stree.nodes[i].name);
       for (j = 0; j < s21; j++) {
          printf(" %9.4f", stree.M[i*s21 + j]);
       }
+      printf("\n");
    }
 
    for (i = 0; i < s21; i++)
@@ -940,8 +949,8 @@ int SetupPopPopTable(int PrintTable)
       printf("\npop by pop table showing node numbers in species tree\n\n%22s", " ");
       for (i = 0; i < 2 * s - 1; i++)
          printf(" %2d", i + 1);
-      FPN(F0);
-      for (i = 0; i < 2 * s - 1; i++, FPN(F0)) {
+      printf("\n");
+      for (i = 0; i < 2 * s - 1; i++) {
          printf("species %2d %-10s ", i + 1, stree.nodes[i].name);
          for (j = 0; j < 2 * s - 1; j++)
             printf(" %2d", (int)stree.pptable[i][j]);
@@ -952,6 +961,7 @@ int SetupPopPopTable(int PrintTable)
          if ((i >= s || stree.nseqsp[i] > 1) && stree.nodes[i].theta <= 0)
             printf("  this theta must be > 0!!");
 #endif
+         printf("\n");
       }
    }
    return(0);
@@ -994,7 +1004,7 @@ void GetRandomGtree(int locus)
 
    mtMRCA += nodes[tree.root].age;
    if (debug == 9) {
-      FPN(F0); OutTreeN(F0, 1, 1); FPN(F0); FPN(F0);
+      printf("\n"); OutTreeN(F0, 1, 1); printf("\n\n");
    }
 }
 
@@ -1105,7 +1115,7 @@ int CoalescentMigration(void)
       Tmax marks the end of the current epoch.
    */
    int n = com.ns, is, i, j, k, k1, k2, ipopE[NSPECIES - 1]; /* ipop for each epoch node */
-   int npop = stree.nspecies, ipop[NSPECIES], *sons, s21 = stree.nspecies * 2 - 1;
+   int npop = stree.nspecies, ipop[NSPECIES], * sons, s21 = stree.nspecies * 2 - 1;
    double r, T, Tmax, C, Ci[NSPECIES], M = 0, Mi[NSPECIES];
    double y, ages[NSPECIES - 1], tmp1[NSPECIES];
 
@@ -1166,16 +1176,16 @@ int CoalescentMigration(void)
             printf(" ) rate CM %6.1f %6.1f ", C, M);
          }
          if (C + M < 1e-300) {             /* move to next epoch */
-            if (debug == 9) FPN(F0);
+            if (debug == 9) printf("\n");
             break;
          }
          T += rndexp(1 / (C + M));
          if (debug == 9) printf(" T %6.3f ", T);
          if (T > Tmax && Tmax != -1) { /* move to next epoch */
-            if (debug == 9) FPN(F0);
+            if (debug == 9) printf("\n");
             break;
          }
-         r = rndu()*(C + M);
+         r = rndu() * (C + M);
          if (r < C) {  /* coalescent in pop i of lineages k1 & k2 */
             /* r ~ U(0, C) */
             for (i = 0, y = 0; i < npop - 1; i++)
@@ -1183,7 +1193,7 @@ int CoalescentMigration(void)
                   break;
 
             /* k1 & k2 (with k1 < k2) are the two lineages to coalesce */
-            j = (int)(nin_G[i] * (nin_G[i] - 1)*rndu());
+            j = (int)(nin_G[i] * (nin_G[i] - 1) * rndu());
             k1 = j / (nin_G[i] - 1);
             k2 = j % (nin_G[i] - 1);
             if (k2 >= k1)
@@ -1239,7 +1249,7 @@ int CoalescentMigration(void)
                for (j = 0; j < nin_G[i]; j++)
                   printf("%d ", ins_G[i][j]);
             }
-            FPN(F0);
+            printf("\n");
          }
       }  /* forever loop inside for(epoch) */
       T = Tmax;
@@ -1338,9 +1348,10 @@ int printGtree(int printBlength)
          nodes[inode].father, inode, t, ipop, (ipopOK ? "OK" : "??"), stree.nodes[ipop].age, nodes[inode].nson);
       for (j = 0; j < nodes[inode].nson; j++) printf(" %2d", nodes[inode].sons[j]);
    }
-   FPN(F0); OutTreeN(F0, 0, 0); FPN(F0); OutTreeN(F0, 1, 0);
+   printf("\n"); OutTreeN(F0, 0, 0); 
+   printf("\n"); OutTreeN(F0, 1, 0);
    if (printBlength) {
-      FPN(F0); OutTreeN(F0, 1, 1); FPN(F0);
+      printf("\n"); OutTreeN(F0, 1, 1); printf("\n");
    }
 
    /* if(status==-1) exit(status); */
@@ -1362,6 +1373,34 @@ int MatchGTree(void)
          );  /* P(gtree) = 0.237913 */
 }
 
+
+
+int MakeDiploidRandom(unsigned char* z[], unsigned char* zt[], int ns, int ls)
+{
+   /* This takes ns fully resolved sequences in z[ns][] and produces randomly phased sequences in zt[].
+      Sequences in z[] are already encoded as 0 1 2 3.
+   */
+   int i, j, k, h;
+
+   for (i = 0, k = 0; i < stree.nspecies; i++) {
+      for (j = 0; j < stree.nseqsp[i] / (data.diploid[i] ? 2 : 1); j++, k++) {
+         if (data.diploid[i] == 0)
+            memcpy(zt[k], z[k], ls * sizeof(unsigned char));
+         else {
+            memcpy(zt[k], z[k], ls * sizeof(unsigned char));
+            memcpy(zt[k + 1], z[k + 1], ls * sizeof(unsigned char));
+            for (h = 0; h < ls; h++) {
+               if (z[k][h] != z[k + 1][h] && rndu() < 0.5) {
+                  zt[k][h] = z[k + 1][h];   zt[k + 1][h] = z[k][h];
+               }
+            }
+            k++;
+         }
+      }
+   }
+   assert(k == ns);
+   return(0);
+}
 
 
 #ifdef SIMULATION
@@ -1406,7 +1445,8 @@ void PMismatch3s(void)
       printf("\n# sites? (Ctrl-C to break) ");
       scanf("%d", &com.ls);
       printf("%d sites, %dK replicates.\n", com.ls, nr / 1000);
-      FOR(i, 4) G[i] = 0; FOR(i, 4) FOR(j, 4) E[i][j] = 0;
+      for (i = 0; i < 4; i++) G[i] = 0; 
+      for (i = 0; i < 4; i++) for (j = 0; j < 4; j++)  E[i][j] = 0;
       for (ir = 0, SG = SE = GE = 0, nused = 0; ir < nr; ir++) {
          GetRandomGtree(-1);
          if (nodes[2].father == tree.root)      gtree = (nodes[0].branch > t_HCG);/* (HC) */
@@ -1450,8 +1490,8 @@ void PMismatch3s(void)
       SG /= nused;
       SE /= nused;
       GE /= nused;
-      FOR(i, 4) FOR(j, 4) E[i][j] /= G[i];
-      FOR(i, 4) G[i] /= nused;
+      for (i = 0; i < 4; i++) for (j = 0; j < 4; j++)  E[i][j] /= G[i];
+      for (i = 0; i < 4; i++)  G[i] /= nused;
       printf("\nfrequencies of gene trees 0123 (given ties are removed): ");
       matout2(F0, &G[0], 1, 4, 9, 5);
       printf("transition probability matrix (gene tree 0123 -> MLtree (01)23):");
@@ -1509,35 +1549,6 @@ int MakeDiploid(unsigned char *z[], unsigned char *zt[], int ns, int nsHet, int 
    assert(isHet == nsHet);
    return(0);
 }
-
-int MakeDiploidRandom(unsigned char *z[], unsigned char *zt[], int ns, int ls)
-{
-/* This takes ns fully resolved sequences in z[ns][] and produces randomly phased sequences in zt[].  
-   Sequences in z[] are already encoded as 0 1 2 3.
-*/
-   int i, j, k, h;
-   unsigned char b[2], c[2], seqname[96];
-
-   for (i = 0, k = 0; i < stree.nspecies; i++) {
-      for (j = 0; j < stree.nseqsp[i]/(data.diploid[i] ? 2 : 1); j++,k++) {
-         if (data.diploid[i]==0)
-            memcpy(zt[k], z[k], ls * sizeof(unsigned char));
-         else {
-            memcpy(zt[k], z[k], ls * sizeof(unsigned char));
-            memcpy(zt[k+1], z[k+1], ls * sizeof(unsigned char));
-            for (h = 0; h < ls; h++) {
-               if (z[k][h] != z[k + 1][h] && rndu() < 0.5) {
-                  zt[k][h] = z[k+1][h];   zt[k + 1][h] = z[k][h];
-               }
-            }
-            k++;
-         }
-      }
-   }
-   assert(k == ns);
-   return(0);
-}
-
 
 void MakeSeq(unsigned char *z, int ls, double pi[4])
 {
@@ -1718,7 +1729,8 @@ void ClockSpeciesNodeRates(int snode, double snoderates[])
 void RelaxedClockBranchLengths(double snoderates[])
 {
    /* This generates rates for species-tree branches and update gene-tree branch lengths.
-   This right now uses independent gamma rates for species-tree branches.
+      This right now uses independent gamma rates (clock2) and correlated gamma rates (clock3) 
+      for species-tree branches.  The log-normal rates are not implemented yet.
    */
    int debug = 0, is, ipop, i, dad;
    double tdad, t;
@@ -1777,8 +1789,14 @@ void SimulateData(void)
    char *tmpseq = (char *)com.space, line[96] = "", *p, timestr[64];
    char *G3s[18] = { "G1c", "G1a", "G1b", "G2c", "G2a", "G2b", "G3c", "G3a", "G3b", "G4c", "G4a", "G4b", "G5c", "G5a", "G5b", "G6c", "G6a", "G6b" };
    double PG3s[18] = { 0 };
+   char sitepattern3sf[1024] = "sitepattern3s.txt";
+   FILE *fsitepattern3s;
 
    /* PMismatch3s(); */
+   if (stree.nspecies == 3 && com.ns == 3) {
+      if ((fsitepattern3s = fopen(sitepattern3sf, "w")) == NULL)
+         error2("sitepattern3s file open error.");
+   }
    com.ngene = 1;
    /* set nsHet for diploid data with heterozygotes */
    /* stree.nseqsp[] has the number of full sequences, set in GetOptionsSimulation. */
@@ -1991,13 +2009,26 @@ void SimulateData(void)
 
          if (com.SeqFileFormat == 1) {
             PatternWeightSimple();
-            /*   if (com.model == 0) PatternWeightJC69like(); */
+            if (com.model == 0) PatternWeightJC69like();
          }
          if (nsHet < com.ns) 
             printSeqs(fseq, zt, spnameHet, nsHet, com.ls, com.npatt, NULL, NULL, NULL, com.SeqFileFormat); /* printsma not usable as it codes into 0,1,...,60. */
          else 
             printSeqs(fseq, com.z, spnameFull, com.ns, com.ls, com.npatt, NULL, NULL, NULL, com.SeqFileFormat); /* printsma not usable as it codes into 0,1,...,60. */
          com.ns = nsFull;
+
+         if (stree.nspecies == 3 && com.ns == 3) {
+            int nc3s[5] = {0};
+            for (int h = 0; h < com.npatt; h++) {
+               if      (com.z[0][h] == com.z[1][h] && com.z[0][h] == com.z[2][h])  nc3s[0] += com.fpatt[h]; /* xxx */
+               else if (com.z[0][h] == com.z[1][h] && com.z[0][h] != com.z[2][h])  nc3s[1] += com.fpatt[h]; /* xxy */
+               else if (com.z[0][h] != com.z[1][h] && com.z[1][h] == com.z[2][h])  nc3s[2] += com.fpatt[h]; /* yxx */
+               else if (com.z[0][h] == com.z[2][h] && com.z[0][h] != com.z[1][h])  nc3s[3] += com.fpatt[h]; /* xyx */
+               else                                                                nc3s[4] += com.fpatt[h]; /* xyz */
+            }
+            fprintf(fsitepattern3s, "%d\t%d\t%d\t%d\t%d\n", nc3s[0], nc3s[1], nc3s[2], nc3s[3], nc3s[4]);
+         }
+
       }   /* if(fseq) */
       if ((locus + 1) % 1000 == 0 || (nloci > 1000 && locus == nloci - 1))
          printf("\r%10d replicates done... mean tMRCA = %9.6f  %s", locus + 1, mtMRCA / (locus + 1), printtime(timestr));
@@ -2052,6 +2083,9 @@ void SimulateData(void)
          if ((k + 1) % 3 == 0) printf("\n");
       }
    }
+   if (stree.nspecies == 3 && com.ns == 3)
+      fclose(fsitepattern3s);
+
    printf("\nTime used: %s\n", printtime(timestr));
    exit(0);
 }
@@ -2065,7 +2099,7 @@ int GetRootTau(void)
    /* This scans the sequence alignments at different loci to calculate the distance
       from of the species tree to the present, for use to specify the upper bound tauU.
    */
-   int root = stree.root, *sons = stree.nodes[root].sons, ipopi, ipopj, npair;
+   int root = stree.root, * sons = stree.nodes[root].sons, ipopi, ipopj, npair;
    int h, i, j, locus, locusused = 0, diploiddata = 0;
    double md = 0, vd = 0, dlocus, dpair, thetaA;
    int debug = 0;
@@ -2112,7 +2146,7 @@ int GetRootTau(void)
 }
 
 
-int ReadSeqData(char *seqfile, char *locusratef, char *heredityf, FILE*fout, char cleandata, int *ipop)
+int ReadSeqData(char* seqfile, char* locusratef, char* heredityf, FILE* fout, char cleandata, int* ipop)
 {
    /* Read sequences at each locus. This sets data.nseqsp[ig].  The ipop info for
       tips on gene trees is returned in ipop[], and passed to GetMem(), which allocates
@@ -2120,9 +2154,11 @@ int ReadSeqData(char *seqfile, char *locusratef, char *heredityf, FILE*fout, cha
 
       use com.cleandata=1 to delete ambiguities at all loci.
    */
-   FILE *fseq = gfopen(seqfile, "r"), *frates = NULL, *fheredity = NULL, *fImap = NULL;
-   char line[10000], *pline, iname[100], tag = '^';
-   int s = stree.nspecies, locus, i, j, k, is, ind, nsFull, lname = 100;
+   FILE* fseq = gfopen(seqfile, "r"), * frates = NULL, * fheredity = NULL, * fImap = NULL;
+   FILE* fseqrand = NULL;
+   int print_random_phase = 0;
+   char line[10000], * pline, iname[100], tag = '^';
+   int s = stree.nspecies, locus, i, j, k, is, ind=-1, nsFull, lname = 100;
    int maxnind = data.maxns * 2 * data.ngene, nind = 0;
    int maxns; /* data.maxns is from the control file and may be too large, reset to maxns from seq file.  */
    double mr;
@@ -2138,7 +2174,7 @@ int ReadSeqData(char *seqfile, char *locusratef, char *heredityf, FILE*fout, cha
       memset(data.Indnames[0], 0, maxnind * lname * sizeof(char));
       fImap = gfopen(com.Imapf, "r");
       for (i = 0; i < maxnind; i++) {
-         data.Indnames[i] = data.Indnames[0] + i*lname;
+         data.Indnames[i] = data.Indnames[0] + i * lname;
          if (fscanf(fImap, "%s%s", data.Indnames[i], line) != 2) break;
          if (strstr(data.Indnames[i], "//")) break;   /* this marks the end of file. */
          for (j = 0; j < s; j++)
@@ -2182,7 +2218,7 @@ int ReadSeqData(char *seqfile, char *locusratef, char *heredityf, FILE*fout, cha
             printf("\nEOF when reading rates from %s\n", locusratef);
             error2("");
          }
-         mr = (mr*locus + data.locusrate[locus]) / (locus + 1.0);
+         mr = (mr * locus + data.locusrate[locus]) / (locus + 1.0);
       }
       fclose(frates);
       for (locus = 0; locus < data.ngene; locus++)
@@ -2203,42 +2239,80 @@ int ReadSeqData(char *seqfile, char *locusratef, char *heredityf, FILE*fout, cha
             error2("");
          }
       }
+      printf("\n%6d heredity scalars read from file %s\n", data.ngene, heredityf);
       fclose(fheredity);
    }
+   if (print_random_phase) {
+      for (is = 0, k = 0; is < stree.nspecies; is++)  k += (data.diploid[is] > 0);
+      if (k) {
+         char* p;
+         strcpy(line, seqfile);
+         if ((p=strstr(line, ".txt")) != NULL) {
+            *p = '\0';
+            strcat(line, "_rand.txt");
+         }
+         else 
+            sprintf(line, "%s%s", seqfile, "_rand");
+         fseqrand = gfopen(line, "w");
+         printf("\nPrinting alignment of random heterozygote phase resolution in %s\n", line);
+      }
+   }
 
-   /*** read and pre-process sequence data at each locus ***/
+   /* Read and pre-process sequence data at each locus. */   
+#if(0)  /*** Ziheng-2021.5.29 deleting outgroup sequences in the horned lizard data ***/
+   FILE *fseqnew = gfopen("seqnew.txt", "w");
+   char seq_delete[] = "KK104";
+   /* char seq_delete[] = "FHSM9405"; */
+   int ndeleted;
+   data.ngene = 200000; /* 57459; */
+#endif
+
    for (locus = 0, maxns = 0; locus < data.ngene; ipop += data.ns[locus++]) {
       fprintf(fout, "\n\n*** Locus %d ***\n", locus + 1);
       printf("\n*** Locus %d ***", locus + 1);
       com.cleandata = cleandata0;
       ReadSeq(fout, fseq, cleandata0, locus);
 
-      data.cleandata[locus] = com.cleandata;
-      if (data.nseqerr == 0) {
-         PatternWeightJC69like();
-         fprintf(fout, "\nPrinting out site pattern counts, after collapsing for JC69.\n\n");
-         printPatterns(fout);
+#if(0) 
+      for (i = 0, ndeleted = 0; i < com.ns; i++)
+         if (strstr(com.spname[i], seq_delete)) ndeleted++;
+      if (ndeleted > 1) printf("\n%d sequences deleted from locus %3d\n", ndeleted, locus + 1);
+      fprintf(fseqnew, "%d %d", com.ns-ndeleted, com.ls);
+      for (i = 0; i < com.ns; i++) {
+         if (strstr(com.spname[i], seq_delete)) continue;
+         fprintf(fseqnew, "\n%-15s ", com.spname[i]);
+         for (int j = 0; j < com.ls; j++) fprintf(fseqnew, "%c", com.z[i][j]);
       }
+      fprintf(fseqnew, "\n\n");
+      fflush(fseqnew);
+      if (locus == data.ngene - 1) exit(0);
+      continue;
+
+#elif(0)      /***** chipmunks, 2021.3.2 **/
+      FILE* flocus;
+      sprintf(line, "locus%d.fas", locus+1);
+      flocus = gfopen(line, "w");
+      for (i = 0; i < com.ns; i++) {
+         fprintf(flocus, ">%-20s\n", com.spname[i]);
+         print1seq(flocus, com.z[i], com.ls, com.pose);
+         fprintf(flocus, "\n");
+      }
+      fclose(flocus);
+#endif
+
       if (com.ns > data.maxns) {
          printf("\n%d seqs at locus %d.  More than allowed by the control file.", com.ns, locus + 1);
          exit(-1);
       }
       if (maxns < com.ns)  maxns = com.ns;
-      data.ns[locus] = com.ns;
-      data.ls[locus] = com.ls;
-      data.npatt[locus] = com.npatt;
-      data.fpatt[locus] = com.fpatt;
-      com.fpatt = NULL;
-      for (i = 0; i < com.ns; i++) {
-         data.z[locus][i] = com.z[i];  com.z[i] = NULL;
-      }
 
       /* Determine ind ID (j or data.Indnames[j]) and ipop (is) for tips at the locus.
          Count data.nseqsp[locus].  */
       for (i = 0; i < s; i++)  data.nseqsp[locus][i] = 0;
       for (i = 0, nsFull = 0; i < com.ns; i++) {
-         if (stree.nspecies == 1)
-            is = 0;
+         if (s == 1) {
+            is = 0; ind = i;
+         }
          else {
             pline = strchr(com.spname[i], tag);
             if (pline == NULL) error2("sequences must be tagged by population ID");
@@ -2246,14 +2320,15 @@ int ReadSeqData(char *seqfile, char *locusratef, char *heredityf, FILE*fout, cha
             for (ind = 0; ind < nind; ind++)
                if (strcmp(iname, data.Indnames[ind]) == 0)  break;
             if (ind == nind) {
-               printf("Individual label %s not recognised.", iname);
-               error2("Please fix the Imap file.");
+               printf("Individual label %s in seq %d in sequence file not found in Imap file.", iname, i + 1);
+               error2("Please fix the seq file or Imap file.");
             }
             else
                is = data.Imap[ind];  /* sequence i is from individual j from species is. */
          }
          ipop[i] = is;  nsFull++;  data.nseqsp[locus][is] ++;
-         if (data.diploid[is]) { nsFull++;  data.nseqsp[locus][is] ++; }
+         if (data.diploid[is]) 
+            { nsFull++;  data.nseqsp[locus][is] ++; }
          if (noisy >= 3)
             printf("seq %2d %-20s is for indiv %d from species %s  \r", i + 1, com.spname[i], ind + 1, stree.nodes[is].name);
       }  /* for(i, com.ns) */
@@ -2262,14 +2337,37 @@ int ReadSeqData(char *seqfile, char *locusratef, char *heredityf, FILE*fout, cha
 
       /* rewrite com.spname[] for the locus if diploid data. */
       if (nsFull > com.ns) {
-         for (i = 0; i < stree.nspecies; i++)  data.nseqsp[locus][i] = 0;
-         for (i = 0, k = 0; i < com.ns; i++) {
+         char *spname0[NS], *p_indname, *spname_copy=malloc((LSPNAME+1)*sizeof(char));
+
+         for (j = com.ns; j < nsFull; j++) {
+            if (com.spname[j]==NULL)
+               com.spname[j] = (char*)malloc((LSPNAME + 1) * sizeof(char));
+            memset(com.spname[j], 0, (LSPNAME + 1) * sizeof(char));
+         }
+         for (i = 0; i < com.ns; i++) {  /* ns is # seqs in unphased alignment */
+            spname0[i] = (char*)malloc((LSPNAME + 1) * sizeof(char));
+            strcpy(spname0[i], com.spname[i]);
+            /*
+            vasprintf(&(spname0[i]), "%s", com.spname[i]);
+            */
+         }
+
+         for (i = 0, k = 0; i < com.ns; i++,k++) {  /* ns is # seqs in unphased alignment */
             is = ipop[i];
-            for (j = 0; j < (data.diploid[is] ? 2 : 1); j++,k++) {
-               data.nseqsp[locus][is] ++;
-               sprintf(com.spname[k], "%s.%d", stree.nodes[is].name, data.nseqsp[locus][is]);
+            if (data.diploid[is] == 0)
+               strcpy(com.spname[k], spname0[i]);
+            else {
+               strcpy(spname_copy, spname0[i]);
+               p_indname = strchr(spname_copy, '^');
+               *p_indname = '\0';
+               sprintf(com.spname[k],   "%s_a^%s", spname_copy, p_indname+1);
+               sprintf(com.spname[k+1], "%s_b^%s", spname_copy, p_indname+1);
+               k++;
             }
          }
+         free(spname_copy);
+         for (i = 0; i < com.ns; i++)
+            free(spname0[i]);
       }
       for (is = 0; is < s; is++) {
          if (data.nseqsp[locus][is] > 1 && stree.nseqsp[is] <= 1) {
@@ -2278,22 +2376,84 @@ int ReadSeqData(char *seqfile, char *locusratef, char *heredityf, FILE*fout, cha
          }
          fprintf(fout, "%s (%2d) ", stree.nodes[is].name, data.nseqsp[locus][is]);
       }
+
+      /*** Ziheng 2021-2-27.
+         Print out alignments of random phase resolution.
+         Sites are already compressed into patterns, and bases are coded into 012345 etc.
+         com.ns com.z[] have unphased sequences.  nFull is # phased sequences.
+         com.spname[nFull], and ipop[ns]
+      ***/
+      if (print_random_phase && fseqrand) {
+         int h, hp;
+         unsigned char* zt[2];
+         zt[0] = malloc(2 * (com.ls + 1) * sizeof(unsigned char));
+         zt[1] = zt[0] + com.ls;
+         memset(zt[0], 0, 2 * (com.ls + 1) * sizeof(unsigned char));
+         fprintf(fseqrand, "\n\n%6d %6d", nsFull, com.ls);
+
+         for (i = 0, k = 0; i < com.ns; i++,k++) {
+            if (data.diploid[ipop[i]] == 0) { /* sequence i is haploid */
+               fprintf(fseqrand, "\n%-10s  ", com.spname[k]);
+               print1seq(fseqrand, com.z[i], com.ls, com.pose);
+            }
+            else {
+               for (h = 0; h < com.ls; h++) {
+                  hp = com.pose[h];
+                  if (com.z[i][hp] >= 5 && com.z[i][hp] < 11) {  /* YRMKSW: heterozygote */
+                     if (nChara[com.z[i][hp]] != 2)
+                        error2("there should be 2 alleles at a heterozygous site?");
+                     int het = com.z[i][hp];
+                     j = (rndu() < 0.5);
+                     zt[0][h] = CharaMap[het][j];
+                     zt[1][h] = CharaMap[het][1 - j];
+                  }
+                  else {   /* TCAGU, - etc.: homozygote */
+                     zt[0][h] = zt[1][h] = com.z[i][hp];
+                  }
+               }
+               fprintf(fseqrand, "\n%-10s  ", com.spname[k]);
+               print1seq(fseqrand, zt[0], com.ls, NULL);
+               fprintf(fseqrand, "\n%-10s  ", com.spname[k + 1]);
+               print1seq(fseqrand, zt[1], com.ls, NULL);
+               k++;
+            }
+         }
+         free(zt[0]);
+      }
+
+      
+      if (data.nseqerr == 0) {
+         PatternWeightJC69like();
+         fprintf(fout, "\nPrinting out site pattern counts, after collapsing for JC69.\n\n");
+         printPatterns(fout);
+      }
+      for (i = 0; i < com.ns; i++) {
+         data.z[locus][i] = com.z[i];  com.z[i] = NULL;
+      }
+      data.cleandata[locus] = com.cleandata;
+      data.ns[locus] = com.ns;
+      data.ls[locus] = com.ls;
+      data.npatt[locus] = com.npatt;
+      data.fpatt[locus] = com.fpatt;
+      com.fpatt = NULL;
       printf("locus %2d: %2d sequences (", locus + 1, data.ns[locus]);
       for (is = 0; is < s; is++) printf(" %2d", data.nseqsp[locus][is]);
       printf("%-30s", " ), ");
       printf("\n%5d sites, %3d patterns, %s\r", com.ls, com.npatt, (com.cleandata ? "clean" : "messy"));
 
+
       /* process diploid data, to change data.ns[locus], data.z[locus], data.npattdiploid[locus] etc. */
       data.diploidlocus[locus] = (nsFull > com.ns);
       if (nsFull > com.ns) {
          /* this changes ns to nsFull and ipop for ns to ipop for nsFull */
-         DiploidResolution(fout, locus, ipop); 
+         DiploidResolution(fout, locus, ipop);
          fprintf(fout, "\ncleandata = %d\n", data.cleandata[locus]);
          if (maxns < com.ns)  maxns = com.ns;
       }
    }  /* for(locus) */
    if (noisy >= 3) printf("\n");
    fclose(fseq);
+   if (fseqrand) fclose(fseqrand);
 
    free(data.Imap);
    free(data.Indnames[0]);
@@ -2335,7 +2495,7 @@ int ReadSeqData(char *seqfile, char *locusratef, char *heredityf, FILE*fout, cha
    (.) data.z[locus][], com.npatt refer to A3.
 */
 
-int DiploidResolution(FILE *fout, int locus, int ipop[])
+int DiploidResolution(FILE* fout, int locus, int ipop[])
 {
    /* This function processes alignment A1 if the original data contain diploid sequences, with
       nsFull > data.ns[locus].
@@ -2351,11 +2511,11 @@ int DiploidResolution(FILE *fout, int locus, int ipop[])
       ipop is for A1 in inputand is for A2 and A3 in output.
    */
    int ns1 = data.ns[locus], nsFull = 0, npatt1 = data.npatt[locus];  /*ns1 is ns in A1 */
-   int nsingle, *singles, indchosen, y;
-   int *index, *ispace, i1, i2, is, i, j, k, c, h, ht, site, ip, iround, *het, *isA2;
-   double *Hsingles;
-   unsigned char *zt[NS], *nHsite, *resolved, *nHind, *z1;
-   signed char *H;
+   int nsingle, * singles, indchosen, y;
+   int* index, * ispace, i1, i2, is, i, j, k, c, h, ht, site, ip, iround, * het, * isA2;
+   double* Hsingles;
+   unsigned char* zt[NS], * nHsite, * resolved, * nHind, * z1;
+   signed char* H;
    int debug = (noisy <= 3 ? 0 : (data.ns[0] > 10 ? 1 : 9));
 
    fprintf(fout, "\n\nPreprocessing alignment for diploid data");
@@ -2363,7 +2523,7 @@ int DiploidResolution(FILE *fout, int locus, int ipop[])
    data.cleandata[locus] = 1;  /* initialized to 1.  may be changed to 0. */
    data.nHdiploid[locus] = (unsigned char*)malloc(npatt1 * sizeof(unsigned char));
    if (data.nHdiploid[locus] == NULL) error2("oom nH");
-   H = (signed char*)malloc(ns1*npatt1 * sizeof(signed char));
+   H = (signed char*)malloc(ns1 * npatt1 * sizeof(signed char));
    Hsingles = (double*)malloc(npatt1 * sizeof(double));
    index = (int*)malloc((3 * npatt1 + 5 * ns1) * sizeof(int));
    if (H == NULL || Hsingles == NULL || index == NULL) error2("oom H ...");
@@ -2377,7 +2537,7 @@ int DiploidResolution(FILE *fout, int locus, int ipop[])
 
    data.npattdiploid[locus] = npatt1;
    nHsite = data.nHdiploid[locus];
-   memset(H, 0, ns1*npatt1 * sizeof(signed char));
+   memset(H, 0, ns1 * npatt1 * sizeof(signed char));
    memset(nHsite, 0, npatt1 * sizeof(unsigned char));
    for (i = 0; i < ns1; i++)  zt[i] = data.z[locus][i];
    for (i = 0; i < ns1; i++) { resolved[i] = 1;  nHind[i] = 0; }
@@ -2387,16 +2547,16 @@ int DiploidResolution(FILE *fout, int locus, int ipop[])
    }
    for (i = 0; i < ns1; i++) {
       if (data.diploid[ipop[i]] == 0) {       /* phased sequence */
-         if(data.cleandata[locus])
+         if (data.cleandata[locus])
             for (h = 0; h < npatt1; h++) {
                if (zt[i][h] >= 5) { data.cleandata[locus] = 0; break; }
-         }
+            }
       }
       else
          for (h = 0; h < npatt1; h++) {
             if (zt[i][h] < 5) continue;     /* TCAGU */
             if (zt[i][h] < 11) {            /* YRMKSW */
-               H[i*npatt1 + h] = (char)1;
+               H[i * npatt1 + h] = (char)1;
                nHsite[h] ++;
                resolved[i] = 0;
                if (data.fpatt[locus][h] == 1)  nHind[i] ++;   /* only singletons are used  */
@@ -2410,18 +2570,19 @@ int DiploidResolution(FILE *fout, int locus, int ipop[])
 
    printf("\n# of heterozygous sites in the sequences: \n");
    for (i = 0; i < ns1; i++) {
-      for (h = 0,k=0; h < npatt1; h++)
-         if(H[i*npatt1 + h])  k += (int)data.fpatt[locus][h];
+      for (h = 0, k = 0; h < npatt1; h++)
+         if (H[i * npatt1 + h])  k += (int)data.fpatt[locus][h];
       printf(" %2d", k);
    }
    printf("\n");
 
    if (debug > 1) {
-      printf("\nH matrix, initial");
-      for (i1 = 0, FPN(F0); i1 < ns1; i1++, FPN(F0)) {
+      printf("\nH matrix, initial\n");
+      for (i1 = 0; i1 < ns1; i1++) {
          for (i2 = 0; i2 < npatt1; i2++)
-            printf(" %2d", H[i1*npatt1 + i2]);
+            printf(" %2d", H[i1 * npatt1 + i2]);
          if (resolved[i1]) printf(" *");
+         printf("\n");
       }
    }
    for (h = 0, nsingle = 0; h < npatt1; h++)
@@ -2449,14 +2610,14 @@ int DiploidResolution(FILE *fout, int locus, int ipop[])
          matout2(F0, Hsingles, 1, nsingle, 6, 1);
          matIout(F0, index, 1, nsingle);
       }
-      for (i = 0; i < nsingle; i++) { 
+      for (i = 0; i < nsingle; i++) {
          site = singles[index[i]];      /* site is most variable singleton site. */
          for (j = 0, y = npatt1 + 1; j < ns1; j++) {   /* find least variable indiv indchosen at site */
-            if (resolved[j] || H[j*npatt1 + site] == 0) continue;
+            if (resolved[j] || H[j * npatt1 + site] == 0) continue;
             if (y > nHind[j]) { y = nHind[j];  indchosen = j; }
          }
          if (y < npatt1 + 1) { /* We have found indchosen to resolve a singleton site */
-            H[indchosen*npatt1 + site] = -1;
+            H[indchosen * npatt1 + site] = -1;
             nHsite[site] --;
             resolved[indchosen] = 1;
             /* update singles list */
@@ -2470,11 +2631,12 @@ int DiploidResolution(FILE *fout, int locus, int ipop[])
          }
       }
       if (debug > 3) {
-         printf("\nH matrix");
-         for (i1 = 0, FPN(F0); i1 < ns1; i1++, FPN(F0)) {
+         printf("\nH matrix\n");
+         for (i1 = 0; i1 < ns1; i1++) {
             for (i2 = 0; i2 < npatt1; i2++)
-               printf(" %2d", H[i1*npatt1 + i2]);
+               printf(" %2d", H[i1 * npatt1 + i2]);
             if (resolved[i1]) printf(" *");
+            printf("\n");
          }
       }
       if (i == nsingle) break;  /* found no singletone sites to resolve. */
@@ -2492,11 +2654,12 @@ int DiploidResolution(FILE *fout, int locus, int ipop[])
    }
 
    if (fout) {
-      fprintf(fout, "\nH matrix\n");
-      for (i1 = 0, FPN(F0); i1 < ns1; i1++, FPN(fout)) {
+      fprintf(fout, "\nH matrix\n\n");
+      for (i1 = 0; i1 < ns1; i1++) {
          for (i2 = 0; i2 < npatt1; i2++)
-            fprintf(fout, " %2d", H[i1*npatt1 + i2]);
+            fprintf(fout, " %2d", H[i1 * npatt1 + i2]);
          if (resolved[i1]) fprintf(fout, " *");
+         fprintf(fout, "\n");
       }
       fprintf(fout, "\nHets for sites\n");
       for (h = 0; h < npatt1; h++) fprintf(fout, " %2d", nHsite[h]);
@@ -2515,11 +2678,11 @@ int DiploidResolution(FILE *fout, int locus, int ipop[])
       }
       for (i = 0, k = 0; i < ns1; i++) {
          c = zt[i][h];
-         if (H[i*npatt1 + h] == 0) {            /* haploid or homo */
+         if (H[i * npatt1 + h] == 0) {            /* haploid or homo */
             z1[isA2[i]] = c;
             if (data.diploid[ipop[i]] == 1) z1[isA2[i] + 1] = c;
          }
-         else if (H[i*npatt1 + h] == -1) {      /* fixed resolution */
+         else if (H[i * npatt1 + h] == -1) {      /* fixed resolution */
             z1[isA2[i]] = (unsigned char)CharaMap[c][0];
             z1[isA2[i] + 1] = (unsigned char)CharaMap[c][1];
          }
@@ -2552,18 +2715,18 @@ int DiploidResolution(FILE *fout, int locus, int ipop[])
    for (i = 0; i < ns1; i++) free(zt[i]);
 
    /* set up ipop for A3 */
-   for (i = ns1-1, k = 0; i >= 0; i--) {
+   for (i = ns1 - 1, k = 0; i >= 0; i--) {
       ipop[isA2[i]] = ipop[i];
-      if (data.diploid[ipop[i]] == 1) ipop[isA2[i]+1] = ipop[i];
+      if (data.diploid[ipop[i]] == 1) ipop[isA2[i] + 1] = ipop[i];
    }
-
 
    /* setting things up to call PatternWeightJC69like() */
    com.ns = data.ns[locus] = nsFull;
-   com.npatt = com.ls = data.npatt[locus];
+   com.ls = -1;  /* this is not used anymore, and is a signal to PatternWeightJC69like(). */
+   com.npatt = data.npatt[locus];
    for (i = 0; i < com.ns; i++)  com.z[i] = data.z[locus][i];
    com.pose = data.pose[locus] = (int*)malloc(data.npatt[locus] * sizeof(int)); /* this is usedful */
-   memset(com.pose, 0, com.npatt * sizeof(int));
+   memset(com.pose, -1, com.npatt * sizeof(int));
    /* com.fpatt is needed by compression routine but counts are not usedful. */
    com.fpatt = (double*)malloc(com.npatt * sizeof(double));
    if (com.fpatt == NULL) error2("oom fpatt");
@@ -2579,8 +2742,10 @@ int DiploidResolution(FILE *fout, int locus, int ipop[])
       fprintf(fout, "\n\nAfter JC compression, # of site patterns in A3 = %d\n", com.npatt);
       printPatterns(fout);
       fprintf(fout, "\nMaps from A2 to A3\n");
-      for (h = 0; h < data.npatt[locus]; h++) fprintf(fout, " %2d", data.pose[locus][h]);
+      for (h = 0; h < data.npatt[locus]; h++)
+         fprintf(fout, " %2d", data.pose[locus][h]);
    }
+
    for (i = 0; i < com.ns; i++) {
       data.z[locus][i] = com.z[i];  com.z[i] = NULL;
    }
@@ -2763,7 +2928,7 @@ int SaveMCMCstate(char *filename, double lnpG, double lnL)
       sizeGtrees += (data.ns[i] * 2 - 1) * sizeof(struct TREEN);
    fwrite(gnodes[0], sizeGtrees, 1, f);
    fwrite(data.root, sizeof(double), data.ngene, f);
-   fwrite(mcmc.finetune, sizeof(double), 7, f);
+   fwrite(mcmc.steplength, sizeof(double), 7, f);
    fwrite(&com.np, sizeof(int), 1, f);
    fwrite(&lnpG, sizeof(double), 1, f);
    fwrite(&lnL, sizeof(double), 1, f);
@@ -2788,7 +2953,7 @@ int ReadMCMCstate(char *filename)
       sizeGtrees += (data.ns[i] * 2 - 1) * sizeof(struct TREEN);
    fread(gnodes[0], sizeGtrees, 1, f);
    fread(data.root, sizeof(double), data.ngene, f);
-   fread(mcmc.finetune, sizeof(double), 7, f);
+   fread(mcmc.steplength, sizeof(double), 7, f);
    fread(&com.np, sizeof(int), 1, f);
    fread(&lnpG, sizeof(double), 1, f);
    fread(&lnL, sizeof(double), 1, f);
@@ -3186,11 +3351,12 @@ double CountCoalescentLocus(int locus)
 
    if (debug == 1) {
       printf("\ncoalescence info in populations:\nspecies  in coal  out   tau     tj\n");
-      for (i = 0; i < stree.nnode; i++, FPN(F0)) {
+      for (i = 0; i < stree.nnode; i++) {
          printf("%4d: %5d%5d%5d %9.5f", i, nin[i], ncoal[i], nout[i], stree.nodes[i].age);
          for (j = 0; j < ncoal[i]; j++) printf(" %9.5f", tj[i*(ns - 1) + j]);
+         printf("\n");
       }
-      FPN(F0);
+      printf("\n");
    }
 
    for (ip = 0; ip < stree.npop; ip++) {
@@ -3199,7 +3365,7 @@ double CountCoalescentLocus(int locus)
       nt = ncoal[ipop];  T2h = 0;  t = tj + ipop*(ns - 1);
       starttime = stree.nodes[ipop].age;
       if (ipop != stree.root) endtime = stree.nodes[stree.nodes[ipop].father].age;
-      else                  endtime = -1;
+      else                    endtime = -1;
 
       if (debug == 1) printf("species %d: tau range (%8.5f, %8.5f) ", ipop, starttime, endtime);
 
@@ -3225,7 +3391,7 @@ double CountCoalescentLocus(int locus)
 
          if (debug == 1) printf(" remaining time %.5f", y);
       }
-      if (debug == 1) FPN(F0);
+      if (debug == 1) printf("\n");
 
       data.ncoal[0][(s * 2 - 1)*locus + ipop] = nt;
       data.T2h[0][(s * 2 - 1)*locus + ipop] = T2h;
@@ -3240,25 +3406,57 @@ double CountCoalescentLocus(int locus)
 
 double lnpG_S(int locus)
 {
-   /* this calculates the probability of gene tree and coalescent times (using tree
-      and nodes[]), given stree (theta and tau).  This is used if(stree.NoTheta == 0).
-   */
-   int s = stree.nspecies, is, ip, nt;
+/* this calculates the probability of gene tree and coalescent times (using tree
+   and nodes[]), given stree (theta and tau).  This is used if(stree.NoTheta == 0).
+*/
+   int s = stree.nspecies, is, j, nt;
    double lnp = 0, T2h, a = data.theta_prior[0], b = data.theta_prior[1];
+   double h = (data.est_heredity ? data.heredity[locus] : 1);
 
    if (debug == 1) puts("\n**** In lnpG_S ****");
-
-   for (ip = 0; ip < stree.npop; ip++) {
-      is = stree.pops[ip];
+   for (j= 0; j < stree.npop; j++) {
+      is = stree.pops[j];
       nt = data.ncoal[0][(s * 2 - 1)*locus + is];
       T2h = data.T2h[0][(s * 2 - 1)*locus + is];
-      if (nt > 0)   lnp += nt * log(2 / stree.nodes[is].theta);
+      if (nt > 0)   lnp += nt * log(2 / (h * stree.nodes[is].theta));
       if (T2h > 0)  lnp -= T2h / stree.nodes[is].theta;
    }
-
    return(lnp);
 }
 
+#if(1)
+double lnpG_S_NoTheta(void)
+{
+/* this calculates the probability of gene tree and coalescent times (using tree
+   and nodes[]), given stree (theta and tau), with theta integrated out.
+*/
+   int s = stree.nspecies, is, i, j, nt;
+   double lnp = 0, a = data.theta_prior[0], b = data.theta_prior[1], T2h;
+   double alnb, lnGa;
+
+   if (debug == 1) puts("\n**** In lnpG_S_NoTheta ****");
+   alnb = a * log(b);
+   lnGa = lgamma(a);
+   lnp = (alnb - lnGa) * stree.npop;
+   if (data.est_heredity)
+      for (i = 0; i < data.ngene; i++) lnp += (data.ns[i] - 1) * log(2 / data.heredity[i]);
+   else 
+      for (i = 0; i < data.ngene; i++) lnp += (data.ns[i] - 1) * log(2.0);
+
+   for (j = 0; j < stree.npop; j++) {
+      is = stree.pops[j];
+      nt = 0;  T2h = 0;
+      for (i = 0; i < data.ngene; i++) {
+         nt += data.ncoal[0][(s * 2 - 1) * i + is];  /* number of coalescents in pop is at locus i */
+         T2h += data.T2h[0][(s * 2 - 1) * i + is];
+      }
+      if(nt==0) lnp += lnGa           - (a + nt) * log(b + T2h);
+      else      lnp += lgamma(a + nt) - (a + nt) * log(b + T2h);
+   }
+   return(lnp);
+}
+
+#else
 double lnpG_S_NoTheta(void)
 {
    /* this calculates the probability of gene tree and coalescent times (using tree
@@ -3269,9 +3467,10 @@ double lnpG_S_NoTheta(void)
    double alnb, lnGa, y;
 
    if (debug == 1) puts("\n**** In lnpG_S_NoTheta ****");
-
-   alnb = a*log(b);  lnGa = LnGamma(a);
-   for (i = 0; i < data.ngene; i++) lnp += (data.ns[i] - 1)*0.6931471805599453;
+   alnb = a*log(b);
+   lnGa = lgamma(a);
+   for (i = 0; i < data.ngene; i++)
+      lnp += (data.ns[i] - 1)*0.6931471805599453;  /* 1/2^nt */
    if (data.est_heredity) {
       for (i = 0, y = 1; i < data.ngene; i++) {
          y *= data.heredity[i];
@@ -3279,7 +3478,6 @@ double lnpG_S_NoTheta(void)
       }
       lnp -= log(y);
    }
-
    for (ip = 0; ip < stree.npop; ip++) {
       is = stree.pops[ip];
       nt = 0;  T2h = 0;
@@ -3290,14 +3488,13 @@ double lnpG_S_NoTheta(void)
       if (nt == 0)
          lnp -= a * log(1 + T2h / b);
       else
-         lnp += alnb - lnGa - (a + nt)*log(b + T2h) + LnGamma(a + nt);
+         lnp += alnb - lnGa - (a + nt)*log(b + T2h) + lgamma(a + nt);
    }
-
    return(lnp);
 }
+#endif
 
-
-double UpdateGB_InternalNode(double* lnL, double* lnpG, double finetune)
+double UpdateGB_InternalNode(double* lnL, double* lnpG, double steplength)
 {
    /* This slides a node in the gene tree without changing the gene tree topology.  The new
       coalescent time tnew may be in a different population from the current, and nodes[inode].ipop
@@ -3310,7 +3507,7 @@ double UpdateGB_InternalNode(double* lnL, double* lnpG, double finetune)
    double lnacceptance, lnLd, lnpGd, lnpGinew, lnpDinew, t, tnew, tb[2];
 
    if (debug == 2) puts("\nUpdateGB_InternalNode");
-   if (finetune <= 0) error2("steplength = 0 in UpdateGB_InternalNode.  Check finetune");
+   if (steplength <= 0) error2("steplength = 0 in UpdateGB_InternalNode.  Check steplength");
    for (i = 0, ninodes = 0; i < data.ngene; i++) ninodes += data.ns[i] - 1;
 
    for (locus = 0; locus < data.ngene; locus++) {
@@ -3343,7 +3540,7 @@ double UpdateGB_InternalNode(double* lnL, double* lnpG, double finetune)
             if (tb[0] > tb[1])
                printf("t bound wrong: %9.5f > %9.5f", tb[0], tb[1]);
          }
-         tnew = t + finetune*rndSymmetrical();
+         tnew = t + steplength*rndSymmetrical();
          tnew = reflect(tnew, tb[0], tb[1]);
 
          /* determine ipoptarget by going up stree */
@@ -3490,7 +3687,7 @@ void GraftNode(int source, int target, double age, int ipop)
    }
 }
 
-double UpdateGB_SPR(double* lnL, double* lnpG, double finetune)
+double UpdateGB_SPR(double* lnL, double* lnpG, double steplength)
 {
    /* This removes a node (inode and its father) in the gene tree and regrafts it to a feasible branch
       (fig. A1A in RY2003).  There is no change to the node times inside the subtree, but the age of
@@ -3518,7 +3715,7 @@ double UpdateGB_SPR(double* lnL, double* lnpG, double finetune)
    double tb[2], t, tnew;
 
    if (debug == 3) puts("\nUpdateGB_SPR ");
-   if (finetune <= 0) error2("steplength = 0 in UpdateGB_InternalNode.  Check finetune");
+   if (steplength <= 0) error2("steplength = 0 in UpdateGB_InternalNode.  Check steplength");
 
    for (locus = 0; locus < data.ngene; locus++) {
       //if(data.ns[locus]==2) continue;  /* no need to update the gene-tree topology */
@@ -3563,7 +3760,7 @@ double UpdateGB_SPR(double* lnL, double* lnpG, double finetune)
             if (sizeSnode[is] > sizeinode) break;
          tb[0] = max2(tb[0], stree.nodes[is].age);
 
-         tnew = t + finetune*rndSymmetrical();
+         tnew = t + steplength*rndSymmetrical();
          tnew = reflect(tnew, tb[0], tb[1]);
 
          /* identify the target pop in which tnew is, by going up stree */
@@ -3746,7 +3943,7 @@ int NodeSlider_NotUsed(double eps)
 }
 
 
-double UpdateTheta(double *lnpG, double finetune, double space[])
+double UpdateTheta(double *lnpG, double steplength, double space[])
 {
    /* This updates theta's one by one, using proportional expansion or shrinkage.
       Perhaps change to sliding window to avoid getting stuck at 0.
@@ -3756,7 +3953,7 @@ double UpdateTheta(double *lnpG, double finetune, double space[])
    double thetaold, thetanew, lnpGd, lnacceptance;
    double *lnpGinew = space, a = data.theta_prior[0], b = data.theta_prior[1];
 
-   if (finetune <= 0) error2("steplength = 0 in UpdateTheta.  Check finetune");
+   if (steplength <= 0) error2("steplength = 0 in UpdateTheta.  Check steplength");
    for (i = 0; i < stree.npop; i++) {
       /* prior and proposal ratios */
       ipop = stree.pops[i];
@@ -3765,7 +3962,7 @@ double UpdateTheta(double *lnpG, double finetune, double space[])
       ntheta++;
       thetaold = stree.nodes[ipop].theta;
 
-      thetanew = thetaold + finetune*rndSymmetrical();
+      thetanew = thetaold + steplength*rndSymmetrical();
       if (thetanew < 0) thetanew = -thetanew;
       stree.nodes[ipop].theta = thetanew;
 
@@ -3793,7 +3990,7 @@ double UpdateTheta(double *lnpG, double finetune, double space[])
 }
 
 
-double UpdateTau (double *lnL, double *lnpG, double finetune, double space[])
+double UpdateTau (double *lnL, double *lnpG, double steplength, double space[])
 {
    /* This updates speciation times tau using the rubber-band algorithm.
       ntj[] are counts of nodes below and above tau (m and n in the paper).
@@ -3806,7 +4003,7 @@ double UpdateTau (double *lnL, double *lnpG, double finetune, double space[])
    double atheta = data.theta_prior[0], btheta = data.theta_prior[1], thetaold, thetanew;
 
    if (debug == 5) puts("\nUpdateTau...");
-   if (finetune <= 0) error2("steplength = 0 in UpdateTimes.  Check finetune");
+   if (steplength <= 0) error2("steplength = 0 in UpdateTimes.  Check steplength");
    if (stree.NoTheta) changetheta = 0;
    for (is = stree.nspecies; is < stree.nnode; is++)
       if (stree.nodes[is].age > 0) ntau++;
@@ -3824,7 +4021,7 @@ double UpdateTau (double *lnL, double *lnpG, double finetune, double space[])
       if (is != stree.root)
          taub[1] = stree.nodes[stree.nodes[is].father].age;
 
-      taunew = tauold + finetune*rndSymmetrical();
+      taunew = tauold + steplength*rndSymmetrical();
       taunew = stree.nodes[is].age = reflect(taunew, taub[0], taub[1]);
       for (k = 0; k < 2; k++)
          taufactor[k] = (taunew - taub[k]) / (tauold - taub[k]);
@@ -4128,9 +4325,9 @@ int RubberProportional(int ispecies, double tauU, double tau, double taunew, dou
 }
 
 
-/* LnGamma(a) is constant throughout the chain */
-#define lnPDFGamma(x, a, b)  ( (a)*log(b) - LnGamma(a) + ((a)-1)*log(x) - (b)*(x) )
-#define lnPDFinvGamma(x, a, b)  ( (a)*log(b) - LnGamma(a) - (a+1)*log(x) - (b)/(x) )
+/* lgamma(a) is constant throughout the chain */
+#define lnPDFGamma(x, a, b)  ( (a)*log(b) - lgamma(a) + ((a)-1)*log(x) - (b)*(x) )
+#define lnPDFinvGamma(x, a, b)  ( (a)*log(b) - lgamma(a) - (a+1)*log(x) - (b)/(x) )
 #define lnPDFBeta(x, p, q, b)  (-LnBeta(p,q) + (p-1)*log(x/b) + (q-1)*log(1-x/b) - log(b) )
 
 int UpdateSpeciesSplit(double *lnL, double* lnpG, double space[], double PrSplit)
@@ -4145,7 +4342,7 @@ int UpdateSpeciesSplit(double *lnL, double* lnpG, double space[], double PrSplit
    double atau = data.tau_prior[0], btau = data.tau_prior[1];
    double lnacceptance = log((1 - PrSplit) / PrSplit), taunew, tauU;
    double lnLd, lnpGd, *lnpGinew = space, *lnpDinew = space + data.ngene, lnpSpeciesModelnew = 0;
-   double thetafactor = 1, y, thetai, aRJ = mcmc.RJfinetune[0], mRJ = mcmc.RJfinetune[1];
+   double thetafactor = 1, y, thetai, aRJ = mcmc.RJsteplength[0], mRJ = mcmc.RJsteplength[1];
    double pbetatau = 2, qbetatau = 8;
 
    if (debug == 6) {
@@ -4315,7 +4512,7 @@ int UpdateSpeciesJoin(double *lnL, double* lnpG, double space[], double PrSplit)
    double atau = data.tau_prior[0], btau = data.tau_prior[1];
    double lnacceptance = log(PrSplit / (1 - PrSplit)), y, tau, tauU;
    double lnpGd, lnLd, *lnpGinew = space, *lnpDinew = space + data.ngene, lnpSpeciesModelnew = 0;
-   double thetafactor = 1, thetai, thetajk0[2], aRJ = mcmc.RJfinetune[0], mRJ = mcmc.RJfinetune[1];
+   double thetafactor = 1, thetai, thetajk0[2], aRJ = mcmc.RJsteplength[0], mRJ = mcmc.RJsteplength[1];
    double pbetatau = 2, qbetatau = 8;
 
    if (debug == 7) printf("\nUpdateSpeciesJoin\nSpecies tree: %s\n", printDelimitationModel());
@@ -4467,7 +4664,7 @@ int UpdateSpeciesJoin(double *lnL, double* lnpG, double space[], double PrSplit)
    return(accepted);
 }
 
-double mixing(double* lnL, double* lnpG, double finetune, double space[])
+double mixing(double* lnL, double* lnpG, double steplength, double space[])
 {
    /* This multiplies all tau (& theta), and branch lengths in all gene trees by c.
       This move can bring a node age in a gene tree to be older than OldAge,
@@ -4479,7 +4676,7 @@ double mixing(double* lnL, double* lnpG, double finetune, double space[])
    double atheta = data.theta_prior[0], btheta = data.theta_prior[1];
    double atau = data.tau_prior[0], btau = data.tau_prior[1];
 
-   if (finetune <= 0) error2("steplength = 0 in mixing.  Check finetune");
+   if (steplength <= 0) error2("steplength = 0 in mixing.  Check steplength");
    copyCoalescent(0);
    ntheta = (stree.NoTheta ? 0 : stree.npop);
    if (stree.speciesdelimitation == 1 || stree.speciestree == 1) {
@@ -4492,7 +4689,7 @@ double mixing(double* lnL, double* lnpG, double finetune, double space[])
          }
       }
    }
-   lnc = finetune*rndSymmetrical();
+   lnc = steplength*rndSymmetrical();
    c = exp(lnc);
    for (locus = 0, k = 0; locus < data.ngene; locus++)
       k += data.ns[locus] - 1;
@@ -4562,7 +4759,7 @@ double mixing(double* lnL, double* lnpG, double finetune, double space[])
 }
 
 
-double UpdateLocusrateHeredity(double* lnL, double* lnpG, double finetune)
+double UpdateLocusrateHeredity(double* lnL, double* lnpG, double steplength)
 {
    /* This updates locus-specific rates and heredity multipliers.
       There is probably no need to update both when both are estimated for the
@@ -4574,9 +4771,11 @@ double UpdateLocusrateHeredity(double* lnL, double* lnpG, double finetune)
    double h, hnew, r, rnew, rref, rrefnew, lnpDrefnew;
 
    if (debug == 2) puts("\nUpdateLocusrateHeredity ");
-   if (finetune <= 0) error2("steplength = 0 in UpdateLocusrateHeredity.  Check finetune");
+   if (steplength <= 0) error2("steplength = 0 in UpdateLocusrateHeredity.  Check steplength");
 
-   if (mcmc.saveconP) FOR(j, data.maxns * 2 - 1) com.oldconP[j] = 0;
+   if (mcmc.saveconP)
+      for (j = 0; j < data.maxns * 2 - 1; j++)
+         com.oldconP[j] = 0;
 
    if (data.est_locusrate == 1) {
       for (j = 1, locusref = 0; j < data.ngene; j++)
@@ -4586,7 +4785,7 @@ double UpdateLocusrateHeredity(double* lnL, double* lnpG, double finetune)
          if (locus == locusref) continue;
          r = data.locusrate[locus];
          rref = data.locusrate[locusref];
-         rnew = r + finetune*rndSymmetrical();
+         rnew = r + steplength*rndSymmetrical();
          rnew = data.locusrate[locus] = reflect(rnew, 0, r + rref);
          rrefnew = data.locusrate[locusref] -= rnew - r;
 
@@ -4622,7 +4821,7 @@ double UpdateLocusrateHeredity(double* lnL, double* lnpG, double finetune)
          copyCoalescent(0);
 
          h = data.heredity[locus];
-         hnew = h + finetune*rndSymmetrical();
+         hnew = h + steplength*rndSymmetrical();
          if (hnew < 0) hnew *= -1;
          data.heredity[locus] = hnew;
          lnacceptance = (data.a_heredity - 1)*log(hnew / h) - data.b_heredity*(hnew - h);
@@ -4649,14 +4848,14 @@ double UpdateLocusrateHeredity(double* lnL, double* lnpG, double finetune)
    return(accepted / (data.est_locusrate*(data.ngene - 1.0) + data.est_heredity*data.ngene));
 }
 
-double UpdateSequenceErrors(double* lnL, double finetune, double space[])
+double UpdateSequenceErrors(double* lnL, double steplength, double space[])
 {
    /* This updates the parameters for sequencing errors
    */
    int  accepted = 0, locus, is, i, j;
    double lnacceptance, lnLd, *lnpDinew = space, eold, enew, eDold, eDnew, *a;
 
-   if (finetune <= 0) error2("steplength = 0 in UpdateSequenceErrors.  Check finetune");
+   if (steplength <= 0) error2("steplength = 0 in UpdateSequenceErrors.  Check steplength");
    for (i = com.ns; i < com.ns * 2 - 1; i++)
       com.oldconP[i] = 0;
 
@@ -4668,7 +4867,7 @@ double UpdateSequenceErrors(double* lnL, double finetune, double space[])
             if (i == j) continue;
             eold = data.e_seqerr[is][i * 4 + j];
             eDold = data.e_seqerr[is][i * 4 + i];
-            enew = eold + finetune*rndSymmetrical();
+            enew = eold + steplength*rndSymmetrical();
             enew = data.e_seqerr[is][i * 4 + j] = reflect(enew, 1e-20, eDold + eold);
             eDnew = data.e_seqerr[is][i * 4 + i] = eDold + eold - enew;
 
@@ -4851,7 +5050,8 @@ int UpdateSpeciesTreeNNI(double *lnL, double* lnpG, double space[])
          TargetChosen[nMoved[locus] - 1] = targets[(int)(ntarget*rndu())];
          if (debug == 11) {
             printf("\nnode %d: %d feasible lineages in target (chosen %d): ", i, ntarget, TargetChosen[nMoved[locus] - 1]);
-            for (j = 0; j < ntarget; j++) printf(" %2d", targets[j]);  FPN(F0);
+            for (j = 0; j < ntarget; j++) printf(" %2d", targets[j]);  
+            printf("\n");
          }
 
          /* feasible lineages in source:
@@ -4865,7 +5065,8 @@ int UpdateSpeciesTreeNNI(double *lnL, double* lnpG, double space[])
          }
          if (debug == 11) {
             printf("node %d: %d feasible lineages in source: ", i, nsource);
-            for (j = 0; j < nsource; j++) printf(" %2d", sources[j]);  FPN(F0);
+            for (j = 0; j < nsource; j++) printf(" %2d", sources[j]);
+            printf("\n");
          }
 
          lnacceptance += log((double)ntarget / nsource);
@@ -5169,7 +5370,8 @@ int UpdateSpeciesTreeSPR(int NNIonly, double *lnL, double* lnpG, double space[])
          TargetChosen[nMoved[locus] - 1] = targets[(int)(ntarget*rndu())];
          if (debug == 11) {
             printf("\nnode %d: %d feasible lineages in target (chosen %d): ", inode, ntarget, TargetChosen[nMoved[locus] - 1]);
-            for (j = 0; j < ntarget; j++) printf(" %2d", targets[j]);  FPN(F0);
+            for (j = 0; j < ntarget; j++) printf(" %2d", targets[j]);
+            printf("\n");
          }
 
          /* feasible lineages in source:
@@ -5183,7 +5385,8 @@ int UpdateSpeciesTreeSPR(int NNIonly, double *lnL, double* lnpG, double space[])
          }
          if (debug == 11) {
             printf("node %d: %d feasible lineages in source: ", inode, nsource);
-            for (j = 0; j < nsource; j++) printf(" %2d", sources[j]);  FPN(F0);
+            for (j = 0; j < nsource; j++) printf(" %2d", sources[j]);
+            printf("\n");
          }
 
          lnacceptance += log((double)ntarget / nsource);
@@ -5351,10 +5554,10 @@ double lnPDFexp(double x, double a, double rate)
        Move branch YA to a descendent of B, and there will be multiple target branches.
        Generate new age of Y (tau_Y) and slide YA up or down the stree, to find the target
        branch C for re-grafting.
-       RWay[] has species on path in reverse move: Y, C-ancestors&root.  It is used to
-       identify ipopTarget & to set up ipop within pure-A clade.
+       RWay[] has species on path in reverse move: Y*, C-ancestors&root.  It is used to
+       identify ipopTarget and to set up ipop within pure-A clade.
 
-   (B) Cycle through all loci.  For each locus, set up flagA, identity all affected nodes
+   (B) Cycle through all loci.  For each locus, set up flagA, identity all moved nodes
        and their targets in the gene tree.  Then apply the SPR operations for the locus.
 
        flagA[]: 0 if black (on skeleton); 1: red (pure-A); 2: black-red (pure-A clade origin).
@@ -5370,7 +5573,7 @@ double lnPDFexp(double x, double a, double rate)
        is unimportant.  We do not reattach one pruned branch onto another, but it is
        possible for a pruned branch to be regrafted to the same branch on skeleton,
        in which case only node ages change but not tree topology.  It is possible for
-       multiple pruned branches to be inserted onto same branch on skeleton.
+       multiple pruned branches to be inserted onto the same branch on skeleton.
 
    (C) Apply SPR operation on species tree, after all gene trees have been changed.
 
@@ -5404,6 +5607,7 @@ int NodeSlider_ProposeSpeciesTree(int *a, int *c, double *tauYnew, int RWay[], d
       xsony = (y == stree.nodes[x].sons[0] ? 0 : 1);
       xage = stree.nodes[x].age;
       *tauYnew = xage + rndexp(mcmc.ExpandRatio*xage);
+
       for (i = x; i != -1; i = stree.nodes[i].father) {
          if (*tauYnew < stree.nodes[i].age) break;
          targets[0] = *c = i;   /* *c is finally set the last time this is visited. */
@@ -5454,7 +5658,11 @@ int NodeSlider_ProposeSpeciesTree(int *a, int *c, double *tauYnew, int RWay[], d
    RWay[0] = y;
    tauRWay[0] = *tauYnew;
    for (i = stree.nodes[*c].father, k = 1; i != -1; i = stree.nodes[i].father) {
-      if (i == y) continue;
+      /* In the expand move, this should not occur since the list is Y*, C-ancestors, R. 
+         In the shrink move, bypass y since y is already on the list.
+      */
+      if (i == y)
+         continue;
       RWay[k] = i;
       tauRWay[k++] = stree.nodes[i].age;
    }
@@ -5545,7 +5753,7 @@ int NodeSlider_PaintPureA(int inode, char flagA[])
       if (nodes[ison].nson)
          NodeSlider_PaintPureA(ison, flagA);
    }
-   if (flagA[sons[0]] == 1 && flagA[sons[1]] == 1)     flagA[inode] = 1;
+   if (flagA[sons[0]] == 1 && flagA[sons[1]] == 1)      flagA[inode] = 1;
    else if (abs(flagA[sons[0]] - flagA[sons[1]]) == 1)  flagA[inode] = 2;
    else                                                 flagA[inode] = 0;
    return(0);
@@ -5573,7 +5781,7 @@ int NodeSlider_ScaleAClade(int inode, int RWay[], double tauRWay[], double taufa
    return nnodesScaled;
 }
 
-int UpdateSpeciesTreeNodeSlider(double *lnL, double* lnpG, double finetune, double space[])
+int UpdateSpeciesTreeNodeSlider(double *lnL, double* lnpG, double steplength, double space[])
 {
    int    s = stree.nspecies, ndspecies, ysona, xsony, locus, inode, dad, sons[2], i, j, k, im;
    int    ipopA, ipopC;  /* ipop for moved node at source & target */
@@ -5679,7 +5887,8 @@ int UpdateSpeciesTreeNodeSlider(double *lnL, double* lnpG, double finetune, doub
          target = targets[(int)(ntarget*rndu())];
          if (debug == 12) {
             printf("\nnode %d: %d feasible target branches (chosen %d): ", inode, ntarget, target);
-            for (j = 0; j < ntarget; j++) printf(" %2d", targets[j]);  FPN(F0);
+            for (j = 0; j < ntarget; j++) printf(" %2d", targets[j]);
+            printf("\n");
          }
 
          /* Reset target, if it has flag 2, by tracing towards tips until flag=0. */
@@ -5857,9 +6066,10 @@ void checkGtree(void)
             printf("\n\n****** checkGtree ******\n");
             printf("locus %d node %d t=%9.6f tb: (%9.6f %9.6f)", locus, inode, t, tb[0], tb[1]);
             printf("\nspecies tree:\n");
-            for (j = 0; j < 2 * stree.nspecies - 1; j++, FPN(F0)) {
+            for (j = 0; j < 2 * stree.nspecies - 1; j++) {
                printf("species %d %-12s ", j + 1, stree.nodes[j].name);
                printf("age %10.6g ", stree.nodes[j].age);
+               printf("\n");
             }
             printf("\ngene tree:\n");
             printGtree(1);
@@ -6173,7 +6383,7 @@ int EnumerateDelimitationModels(void)
    if (debug) {
       printf("\n%d models: ", nModels);
       for (j = 0; j < nModels; j++)  printf(" %s", stree.DelimitationModels + j*s);
-      FPN(F0);
+      printf("\n");
    }
 
    return(nModels);
@@ -6199,7 +6409,7 @@ double CountLHsTree2(void)
          printf("\n*****Round %d\n", k + 1);
          for (i = 0; i < s - 1; i++)
             printf("\nnode %2d %d (%2d %2d): %2d %2d ", i + s, stree.nodes[i + s].age > 0, stree.nodes[i + s].sons[0], stree.nodes[i + s].sons[1], LR[i][0], LR[i][1]);
-         FPN(F0);
+         printf("\n");
       }
       for (i = 2 * s - 1 - 1, change = 0; i >= 0; i--) {
          if (stree.nodes[i].age == 0) continue;
@@ -6403,9 +6613,9 @@ void SummarizeA10_SpeciesDelimitation(FILE* fout, char mcmcf[])
       nodes[k].annotation = NULL;
    }
    printf("\nGuide tree with posterior probability for presence of nodes\n");
-   OutTreeN(F0, 1, PrLabel);   FPN(F0);
+   OutTreeN(F0, 1, PrLabel);   printf("\n");
    fprintf(fout, "\nGuide tree with posterior probability for presence of nodes\n");
-   OutTreeN(fout, 1, PrLabel); FPN(fout);
+   OutTreeN(fout, 1, PrLabel); fprintf(fout, "\n");
 
    free(stree.pmodel);
    free(stree.DelimitationModels);
@@ -6486,13 +6696,15 @@ int SpeciesTreeDelimitationModelRepresentation(struct SMODEL *model, int ndspeci
             pptable[i*s21 + j] = (char)1;
       if (debug) {
          printf("\npptable\n");
-         for (i = 0; i < s21; i++, FPN(F0))
-            for (j = 0; j < s21; j++) printf(" %2d", (int)pptable[i*s21 + j]);
+         for (i = 0; i < s21; i++) {
+            for (j = 0; j < s21; j++) printf(" %2d", (int)pptable[i * s21 + j]);
+            printf("\n");
+         }
       }
 
       for (i = 0, ndsp = 0; i < s; i++) {
          if (visited[i]) continue;
-         if (nodes[i].branch > 0) {  /* tip pop i is a distinct species */
+         if (nodes[i].branch > 0) {    /* tip pop i is a distinct species */
             model->spnames[ndsp][0] = i + 1;  nodes[i].label = ndsp;
          }
          else {
@@ -6697,7 +6909,7 @@ void SummarizeA11_SpeciesTreeDelimitation(FILE* fout, char mcmcf[])
       j = index[k];  y = countmodel[j];
       printf("%6.0f %8.6f %8.6f  ", y, y / ntree, (cdf += y / ntree));
       PrintSmodel(F0, models + j, 1);
-      FPN(F0);
+      printf("\n");
       if (cdf > 0.99 && y / ntree < 0.001) break;
       if (nmodel > 99 && k >= 50) {
          printf("\nMany models.  See output file for other models.\n");  break;
@@ -6708,7 +6920,7 @@ void SummarizeA11_SpeciesTreeDelimitation(FILE* fout, char mcmcf[])
       j = index[k];  y = countmodel[j];
       fprintf(fout, "%6.0f %8.6f %8.6f  ", y, y / ntree, (cdf += y / ntree));
       PrintSmodel(fout, models + j, 1);
-      FPN(fout);
+      fprintf(fout, "\n");
       if (cdf > 0.999 && y / ntree < 0.0001) break;
    }
 
@@ -6745,7 +6957,7 @@ void SummarizeA11_SpeciesTreeDelimitation(FILE* fout, char mcmcf[])
       j = index[k];
       printf("%7.0f %9.6f  ", countdelimit[j], countdelimit[j] / ntree);
       PrintSmodel(F0, (struct SMODEL *)(delimits + j), 0);   /* is this casting safe */
-      FPN(F0);
+      printf("\n");
       if (ndelimit > 99 && k >= 50) {
          printf("\nMany delimitations.  See output file for others.\n");  break;
       }
@@ -6756,7 +6968,7 @@ void SummarizeA11_SpeciesTreeDelimitation(FILE* fout, char mcmcf[])
       j = index[k];
       fprintf(fout, "%7.0f %9.6f  ", countdelimit[j], countdelimit[j] / ntree);
       PrintSmodel(fout, (struct SMODEL *)(delimits + j), 0);   /* is this casting safe */
-      FPN(fout);
+      fprintf(fout, "\n");
    }
 
 
@@ -6794,7 +7006,7 @@ void SummarizeA11_SpeciesTreeDelimitation(FILE* fout, char mcmcf[])
       printf("%7.0f %9.6f  ", countdspecies[j], countdspecies[j] / ntree);
       p = dspecies + j*s1;
       while (*p) printf("%s", stree.nodes[*p++ - 1].name);
-      FPN(F0);
+      printf("\n");
       if (ndspecies > 99 && k >= 99) {
          printf("\nMany delimited species.  See output file for others.\n");  break;
       }
@@ -6805,7 +7017,7 @@ void SummarizeA11_SpeciesTreeDelimitation(FILE* fout, char mcmcf[])
       fprintf(fout, "%7.0f %9.6f  ", countdspecies[j], countdspecies[j] / ntree);
       p = dspecies + j*s1;
       while (*p) fprintf(fout, "%s", stree.nodes[*p++ - 1].name);
-      FPN(fout);
+      fprintf(fout, "\n");
    }
 
 
@@ -6898,7 +7110,7 @@ int SummarizeA00_DescriptiveStatisticsSimpleBPP(FILE *fout, char infile[], int S
    fprintf(fout, "\n97.5%%HPD"); for (j = SkipColumns; j < p; j++) fprintf(fout, fmt, xHPD975[j]);
    fprintf(fout, "\nESS*    ");  for (j = SkipColumns; j < p; j++) fprintf(fout, fmt1, n / Tint[j]);
    fprintf(fout, "\nEff*    ");  for (j = SkipColumns; j < p; j++) fprintf(fout, fmt, 1 / Tint[j]);
-   FPN(fout);
+   fprintf(fout, "\n");
    fflush(fout);
 
    /* print results in FigTree.tre */
@@ -6940,7 +7152,8 @@ int MCMC(FILE* fout)
    int nsteps = 5 + (data.est_locusrate == 1 || data.est_heredity == 1) + (data.nseqerr > 0);
    int locus, j, k, ir, Bmodel = 0, lline = 16000, s = stree.nspecies;
    double *x = NULL, *mx = NULL, lnL, lnpG, mlnL = 0, PrSplit = 0.5;
-   double PjumpRJ = 0, PjumpSlider = 0, Pjump[7] = { 0 }, nround = 0, nroundRJ = 0, nroundSPR = 0, Dpi = 1;
+   double nround = 0, nroundRJ = 0, nroundSPR = 0, nroundSlider = 0, Dpi = 1;
+   double PjumpRJ = 0, PjumpSPR = 0, PjumpSlider = 0, Pjump[7] = { 0 };
    double mrootage = 0, mroottheta = 0, Pspecies[NSPECIES] = { 0 };
    int ndspecies = 0, ndspeciesbest = 0;
 
@@ -6974,12 +7187,11 @@ int MCMC(FILE* fout)
 
    if (stree.speciesdelimitation == 1) {
       printf("PrSplit = %.6f\nrj algorithm %d: new theta from ", PrSplit, mcmc.RJalgorithm);
-      if (mcmc.RJalgorithm == 0)       printf("sliding window with c = %.2f\n", mcmc.RJfinetune[0]);
-      else if (mcmc.RJalgorithm == 1)  printf("G(a=%.2f, m=%.2f)\n", mcmc.RJfinetune[0], mcmc.RJfinetune[1]);
+      if (mcmc.RJalgorithm == 0)       printf("sliding window with c = %.2f\n", mcmc.RJsteplength[0]);
+      else if (mcmc.RJalgorithm == 1)  printf("G(a=%.2f, m=%.2f)\n", mcmc.RJsteplength[0], mcmc.RJsteplength[1]);
    }
 
    com.np = GetInitials();
-
    stree.iModel = -1;
    if (stree.analysis == A10)
       stree.iModel = GetDmodelIndex();
@@ -7058,17 +7270,18 @@ int MCMC(FILE* fout)
    lnL = lnpData(data.lnpDi);
    printf("\nlnpG0 = %9.6f  lnL0 = %6.6f\n", lnpG, lnL);
    fprintf(fout, "\nlnpG0 = %9.6f  lnL0 =%9.6f\n", lnpG, lnL);
-   fflush(fout);
+   fflush(NULL);
 
    for (ir = -mcmc.burnin; ir < mcmc.sampfreq*mcmc.nsample; ir++) {
       if (debug) printf("\n\n***** MCMC ir = %6d", ir + 1);
       if (ir == 0 || (mcmc.resetsteps && nround >= 100 && mcmc.burnin >= 200
          && ir < 0 && ir % (mcmc.burnin / 4) == 0)) {
-         /* reset finetune parameters.  Do this four times. */
+         /* reset steplength parameters.  Do this four times. */
          if (mcmc.resetsteps && mcmc.burnin >= 200) {
-            ResetStepLengths(fout, Pjump, mcmc.finetune, nsteps);
+            ResetStepLengths(fout, Pjump, mcmc.steplength, nsteps);
          }
-         nround = nroundRJ = nroundSPR = 0;  PjumpRJ = PjumpSlider = 0;
+         nround = nroundRJ = nroundSPR = nroundSlider = 0;
+         PjumpRJ = PjumpSPR = PjumpSlider = 0;
          mlnL = 0;
          zero(Pjump, nsteps);
          zero(Pspecies, s);
@@ -7094,25 +7307,34 @@ int MCMC(FILE* fout)
       if (ndspecies > 2 && stree.speciestree == 1) {
 #if(defined NNI_ONLY)         /*  NNI only */
          j = UpdateSpeciesTreeNNI(&lnL, &lnpG, com.space);
-#else
-         if (rndu() > mcmc.pSlider) j = UpdateSpeciesTreeSPR(0, &lnL, &lnpG, com.space);  /* 1 for NNIonly */
-         else                       j = UpdateSpeciesTreeNodeSlider(&lnL, &lnpG, 5 * data.tau_prior[0] / data.tau_prior[1], com.space);
-#endif
          if (j == 0 || j == 1)  nroundSPR++;
-         if (j == 1)          PjumpSlider++;
+         if (j == 1)            PjumpSPR++;
+#else
+         if (rndu() > mcmc.pSlider) {
+            j = UpdateSpeciesTreeSPR(0, &lnL, &lnpG, com.space);  /* 1 for NNIonly */
+            nroundSPR++;
+            if (j == 1) PjumpSPR++;
+         }
+         else {
+            j = UpdateSpeciesTreeNodeSlider(&lnL, &lnpG, 5 * data.tau_prior[0] / data.tau_prior[1], com.space);
+            nroundSlider++;
+            if (j == 1) PjumpSlider++;
+         }
+#endif
       }
-      Pjump[0] = (Pjump[0] * (nround - 1) + UpdateGB_InternalNode(&lnL, &lnpG, mcmc.finetune[0])) / nround;
-      Pjump[1] = (Pjump[1] * (nround - 1) + UpdateGB_SPR(&lnL, &lnpG, mcmc.finetune[1])) / nround;
-      if (!stree.NoTheta) Pjump[2] = (Pjump[2] * (nround - 1) + UpdateTheta(&lnpG, mcmc.finetune[2], com.space)) / nround;
-      if (s > 1 && stree.nodes[stree.root].age > 0)
-         Pjump[3] = (Pjump[3] * (nround - 1) + UpdateTau(&lnL, &lnpG, mcmc.finetune[3], com.space)) / nround;
 
-      Pjump[4] = (Pjump[4] * (nround - 1) + mixing(&lnL, &lnpG, mcmc.finetune[4], com.space)) / nround;
+      Pjump[0] = (Pjump[0] * (nround - 1) + UpdateGB_InternalNode(&lnL, &lnpG, mcmc.steplength[0])) / nround;
+      Pjump[1] = (Pjump[1] * (nround - 1) + UpdateGB_SPR(&lnL, &lnpG, mcmc.steplength[1])) / nround;
+      if (!stree.NoTheta) Pjump[2] = (Pjump[2] * (nround - 1) + UpdateTheta(&lnpG, mcmc.steplength[2], com.space)) / nround;
+      if (s > 1 && stree.nodes[stree.root].age > 0)
+         Pjump[3] = (Pjump[3] * (nround - 1) + UpdateTau(&lnL, &lnpG, mcmc.steplength[3], com.space)) / nround;
+
+      Pjump[4] = (Pjump[4] * (nround - 1) + mixing(&lnL, &lnpG, mcmc.steplength[4], com.space)) / nround;
 
       if (data.est_locusrate == 1 || data.est_heredity == 1)
-         Pjump[5] = (Pjump[5] * (nround - 1) + UpdateLocusrateHeredity(&lnL, &lnpG, mcmc.finetune[5])) / nround;
+         Pjump[5] = (Pjump[5] * (nround - 1) + UpdateLocusrateHeredity(&lnL, &lnpG, mcmc.steplength[5])) / nround;
       if (data.nseqerr)
-         Pjump[6] = (Pjump[6] * (nround - 1) + UpdateSequenceErrors(&lnL, mcmc.finetune[6], com.space)) / nround;
+         Pjump[6] = (Pjump[6] * (nround - 1) + UpdateSequenceErrors(&lnL, mcmc.steplength[6], com.space)) / nround;
 
       if (stree.speciestree == 0) {
          collectx(1, NULL, x);
@@ -7199,15 +7421,21 @@ int MCMC(FILE* fout)
             fprintf(fout, " P[%d]=%6.4f  %6.4f %6.4f", Bmodel + 1, stree.pmodel[Bmodel] / nround, mroottheta, mrootage);
          }
          else if (stree.analysis == A01) {     /* A01 */
-            printf(" %6.4f  %6.4f %6.4f", (nroundSPR ? PjumpSlider / nroundSPR : 0), mroottheta, mrootage);
-            fprintf(fout, " %6.4f  %6.4f %6.4f", (nroundSPR ? PjumpSlider / nroundSPR : 0), mroottheta, mrootage);
+            printf(" %6.4f %6.4f", (nroundSPR ? PjumpSPR / nroundSPR : 0), (nroundSlider ? PjumpSlider / nroundSlider : 0));
+            printf("  %6.4f %6.4f", mroottheta, mrootage);
+            fprintf(fout, " %6.4f %6.4f", (nroundSPR ? PjumpSPR / nroundSPR : 0), (nroundSlider ? PjumpSlider / nroundSlider : 0));
+            fprintf(fout, "  %6.4f %6.4f", mroottheta, mrootage);
          }
          else if (stree.analysis == A11) {     /* A11 */
-            printf(" %2d %2d %6.4f %6.4f P(%d)=%6.4f  %6.4f %6.4f", ndspecies, com.np,
-               (nroundRJ ? PjumpRJ / nroundRJ : 0), (nroundSPR ? PjumpSlider / nroundSPR : 0),
+            printf(" %2d %2d %6.4f %6.4f %6.4f P(%d)=%6.4f  %6.4f %6.4f", ndspecies, com.np,
+               (nroundRJ ? PjumpRJ / nroundRJ : 0), 
+               (nroundSPR ? PjumpSlider / nroundSPR : 0), 
+               (nroundSlider ? PjumpSlider / nroundSlider : 0),
                ndspeciesbest + 1, Pspecies[ndspeciesbest], mroottheta, mrootage);
-            fprintf(fout, " %2d %2d %6.4f %6.4f P(%d)=%6.4f  %6.4f %6.4f", ndspecies, com.np,
-               (nroundRJ ? PjumpRJ / nroundRJ : 0), (nroundSPR ? PjumpSlider / nroundSPR : 0),
+            fprintf(fout, " %2d %2d %6.4f %6.4f %6.4f P(%d)=%6.4f  %6.4f %6.4f", ndspecies, com.np,
+               (nroundRJ ? PjumpRJ / nroundRJ : 0),
+               (nroundSPR ? PjumpSlider / nroundSPR : 0),
+               (nroundSlider ? PjumpSlider / nroundSlider : 0),
                ndspeciesbest + 1, Pspecies[ndspeciesbest], mroottheta, mrootage);
          }
 
@@ -7228,11 +7456,9 @@ int MCMC(FILE* fout)
             printf(" %s\n", printtime(timestr));
             fprintf(fout, " %s\n", printtime(timestr));
             fflush(fout);
-
-            if (ir >= 0 && com.checkpoint == 1) { /* save MCMC state */
+            k = mcmc.sampfreq*mcmc.nsample;
+            if (com.checkpoint == 1 && ir >= 0 && (ir + 1) % (k / 10) == 0) /* save MCMC state */
                SaveMCMCstate(com.checkpointf, lnpG, lnL);
-            }
-
          }
       }
    }  /* for(ir) */
